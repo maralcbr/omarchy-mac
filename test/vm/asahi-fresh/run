@@ -18,7 +18,16 @@ candidate_sha256=${OMARCHY_VM_CANDIDATE_SHA256:-}
 candidate_fingerprint=${OMARCHY_VM_CANDIDATE_FINGERPRINT:-}
 candidate_package_count=${OMARCHY_VM_CANDIDATE_PACKAGE_COUNT:-}
 candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$root/default/omarchy-arm-repository.asc}
+# The guest installs Arch Linux ARM packages from a dated, immutable copy of the
+# repositories rather than the live mirrors, so a mirror mid-transition cannot
+# fail a run that has nothing to do with it. The date is the one the current
+# payload was built against; see docs/apple-silicon-distribution-channels.md.
+alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260905/$repo/os/$arch'}
 
+[[ $alarm_mirror == https://*'/$repo/os/$arch' ]] || {
+  echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL ending in /$repo/os/$arch' >&2
+  exit 1
+}
 [[ $vm_memory_mb =~ ^[1-9][0-9]*$ ]] || {
   echo "OMARCHY_VM_MEMORY_MB must be a positive integer" >&2
   exit 1
@@ -85,7 +94,8 @@ docker run -d \
   -v "$state:/work" \
   "$image" sleep infinity >/dev/null
 
-docker exec "$container" /usr/local/lib/omarchy-asahi-vm/build-base
+docker exec -e ARCHARM_MIRROR_URL="$alarm_mirror" \
+  "$container" /usr/local/lib/omarchy-asahi-vm/build-base
 docker exec -e OMARCHY_VM_MEMORY_MB="$vm_memory_mb" \
   "$container" /usr/local/lib/omarchy-asahi-vm/start-vm
 docker exec "$container" chown -R "$(id -u):$(id -g)" /work/run
@@ -131,6 +141,8 @@ wait_for_reboot() {
 }
 
 wait_for_ssh || { tail -200 "$state/run/serial.log"; exit 1; }
+scp "${scp_args[@]}" "$harness/guest/alarm-snapshot" root@127.0.0.1:/root/omarchy-vm-alarm-snapshot
+ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-alarm-snapshot
 if [[ -n $candidate_tag ]]; then
   scp "${scp_args[@]}" "$candidate_key" root@127.0.0.1:/root/omarchy-arm-repository.asc
   scp "${scp_args[@]}" "$harness/guest/candidate-repository" root@127.0.0.1:/root/omarchy-vm-candidate-repository
@@ -147,7 +159,7 @@ scp "${scp_args[@]}" "$root/bin/omarchy-update-asahi-bundle" root@127.0.0.1:/roo
 scp "${scp_args[@]}" "$harness/guest/install" root@127.0.0.1:/root/omarchy-vm-install
 stable_version=$(<"$root/version")
 ssh -tt "${ssh_args[@]}" root@127.0.0.1 \
-  env OMARCHY_VM_STABLE_VERSION="$stable_version" bash /root/omarchy-vm-install |
+  env OMARCHY_VM_STABLE_VERSION="$stable_version" OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-install |
   tee "$state/run/install.log" || exit 1
 
 boot_id=$(ssh "${ssh_args[@]}" root@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
@@ -168,7 +180,7 @@ if (( optional_packages )); then
     root@127.0.0.1:/root/omarchy-vm-optional-packages
 
   optional_status=0
-  ssh "${ssh_args[@]}" root@127.0.0.1 bash /root/omarchy-vm-optional-packages |
+  ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-optional-packages |
     tee "$state/run/optional-packages.log" || optional_status=$?
   scp -r "${scp_args[@]}" root@127.0.0.1:/root/optional-package-logs "$state/run/"
   (( optional_status == 0 )) || exit "$optional_status"

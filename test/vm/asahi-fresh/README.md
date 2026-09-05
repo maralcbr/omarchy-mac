@@ -27,6 +27,15 @@ The guest uses 8 vCPUs, 6 GiB RAM, and a 96 GiB sparse disk. Set
 `OMARCHY_VM_MEMORY_MB` explicitly when a different disposable-guest limit is
 required.
 
+The guest takes its Arch Linux ARM packages from a dated, immutable copy of the
+`core`, `extra`, `alarm` and `aur` repositories in our own bucket, not from the
+live mirrors, so a mirror caught mid-transition (one package rebuilt against a
+new library, its dependents not yet) cannot fail a run that has nothing to do
+with it. The default is the snapshot the current payload was built against;
+`OMARCHY_VM_ALARM_MIRROR` overrides it with another `https://…/$repo/os/$arch`
+URL. Only the signed base rootfs still comes from a live mirror. See
+`docs/apple-silicon-distribution-channels.md`, "The Arch Linux ARM snapshot".
+
 Use `--rebuild-base` to discard the cached Arch Linux ARM base and `--keep` to
 retain the VM container after a run. State and failure artifacts are written to
 `test/vm/asahi-fresh/test-runs/`, which is ignored by Git.

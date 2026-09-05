@@ -32,6 +32,7 @@ report_failure() {
 trap 'report_failure $LINENO' ERR
 
 [[ ${OMARCHY_VM_STABLE_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+-mac\.[0-9]+$ ]]
+[[ -n ${OMARCHY_VM_ALARM_MIRROR:-} ]]
 
 rm -rf "$work"
 mkdir -p "$work"
@@ -205,6 +206,9 @@ rm -f /usr/local/bin/passwd
 # a different, smaller database and reports the candidate's packages as
 # not found.
 use_candidate_repository() {
+  # The same goes for the Arch Linux ARM mirrors: whatever wrote pacman.conf
+  # since the last run wrote the live ones.
+  bash /root/omarchy-vm-alarm-snapshot
   [[ -r /root/omarchy-arm-repository.asc && -f /var/lib/omarchy/vm-package-candidate ]] || return 0
   local candidate_tag candidate_primary
   candidate_tag=$(sed -n 's/^release_tag=//p' /var/lib/omarchy/vm-package-candidate)

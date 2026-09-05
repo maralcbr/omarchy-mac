@@ -28,6 +28,7 @@ Everything is served from `https://downloads.aicodelabs.com.au`.
 | `channels/<channel>/channel.json` | **yes** | which OS tag and sequence that is, for humans |
 | `installer/<channel>/Omarchy-MX-Mac-Installer.pkg` | **yes** | the download the README links to |
 | `installer/<channel>/installer.json` | **yes** | that package's version, digest and size |
+| `mirror/alarm/<YYYYMMDD>/<repo>/os/aarch64/` | no | a dated copy of the Arch Linux ARM repositories, see below |
 
 Exactly those four mutable keys may ever be overwritten, and only through
 `scripts/publish-channels`, which refuses any other key and is covered by
@@ -222,8 +223,8 @@ is deleted. A never-promoted candidate set is not rollback material and goes.
 `os-promote --to stable` runs this prune itself once the promotion has been verified, so
 cleanup happens at the moment the old release stops mattering; pass `--no-prune` to skip it. A
 bucket lock that still protects the old set is reported after the promotion, never treated as a
-failed release. Channel objects, the stable/rc/edge downloads, and
-folders published by other lanes (the generic ISO releases) are never candidates, and the
+failed release. Channel objects, the stable/rc/edge downloads, the Arch Linux ARM snapshots
+under `mirror/`, and folders published by other lanes (the generic ISO releases) are never candidates, and the
 references are re-read immediately before each deletion so a promotion in between cannot be
 undone by a stale plan.
 
@@ -240,6 +241,42 @@ every Mac that already accepted the current one refuses it while fresh Macs
 accept it, splitting the fleet. Instead regenerate a catalog over the older
 artifact URLs with a new, higher sequence, sign it, publish it under the old
 tag's prefix, and promote that.
+
+## The Arch Linux ARM snapshot
+
+Arch Linux ARM keeps no dated snapshots of its repositories, and its mirrors are
+push-synchronised, so every one of them shows the same state at once. While a
+library transition is in flight there (`aquamarine` rebuilt for a new soname
+before `hyprland` was, 2026-09-04), nothing that installs a desktop from the live
+mirrors can succeed, and that includes the payload build and the VM acceptance
+gate, neither of which has anything to do with the change. Both therefore read
+Arch Linux ARM from a dated, immutable copy in the bucket instead:
+
+```
+mirror/alarm/<YYYYMMDD>/<repo>/os/aarch64/     repo = core, extra, alarm, aur
+```
+
+as `Server = https://downloads.aicodelabs.com.au/mirror/alarm/<YYYYMMDD>/$repo/os/$arch`.
+A snapshot is never modified; a new date is a new prefix. It is not under
+`releases/`, so the bucket's age lock does not apply to it, and `publish-channels
+prune` never touches `mirror/`: a snapshot stays until it is removed by hand, and
+the one the current rc and stable payloads were built against must stay.
+
+Who reads it: `omarchy-iso/configs/pacman-online-arm.conf` (the payload build) and
+`test/vm/asahi-fresh` (the acceptance guest). Installed Macs do not: they keep
+the live mirrors, as `pacman-online-installed-arm.conf` says, and `omarchy update`
+reports a mirror mid-transition as exactly that rather than as a failure.
+
+| Snapshot | Taken from | Pinned by | Notes |
+| --- | --- | --- | --- |
+| `20260905` | `ca.us.mirror.archlinuxarm.org`, 2026-09-05 | payload `2026.09.05`, acceptance of `asahi-packages-candidate-5a3a266d` | `extra` carries `aquamarine 0.14.0-2` (provides `libaquamarine.so=13`) in place of the live `0.15.0-2`, so `hyprland 0.56.1-3` and `hyprtoolkit 0.5.4-5` resolve; the databases were regenerated with `repo-remove`/`repo-add`, every package keeps its Arch Linux ARM signature |
+
+Taking one: `rsync -rtL` each repository from a mirror's `rsync://…/archlinuxarm/aarch64/<repo>/`
+(dereferencing the `.db`/`.files` symlinks, skipping `*.old`), apply whatever
+substitution the date needs with `repo-remove`/`repo-add` in an Arch Linux ARM
+container, prove the desktop resolves against `file://` copies of the result, then
+`aws s3 sync` into the dated prefix. The whole set is about 55 GB, which is under
+a dollar a month at R2's rates; drop a date once nothing served or built pins it.
 
 ## Which change costs what
 

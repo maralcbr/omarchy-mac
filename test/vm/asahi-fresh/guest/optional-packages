@@ -16,6 +16,8 @@ done <"$manifest"
 rm -rf "$log_dir"
 mkdir -p "$log_dir"
 
+bash /root/omarchy-vm-alarm-snapshot || exit 1
+
 while read -r id; do
   [[ $id == install.* ]] || continue
   packages=${transactions[$id]-}

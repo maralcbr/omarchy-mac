@@ -18,7 +18,9 @@ the Asahi kernel.
    validation-only route. Never relabel generic ARM media.
 2. Retain the exact ISO, static media evidence, content-addressed Apple package
    snapshot, all detached signatures, and every source commit named by the
-   manifest.
+   manifest. Build and accept against a dated Arch Linux ARM snapshot in the
+   bucket (`mirror/alarm/<YYYYMMDD>/`), never the live mirrors; record which
+   date the payload pins in `apple-silicon-distribution-channels.md`.
 3. Verify the ISO and manifest with the production public key and a durable,
    rollback-protected sequence store. Verification must be read-only first;
    advance the sequence only after the complete candidate set passes.

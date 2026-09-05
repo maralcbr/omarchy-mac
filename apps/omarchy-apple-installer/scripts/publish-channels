@@ -496,7 +496,9 @@ PY
 # Bucket prefixes this tool is allowed to remove: immutable release sets and
 # immutable installer versions, and nothing else. Channel objects and the
 # stable/rc/edge installer downloads are never candidates, and neither is
-# anything published by another lane (the generic ISO folders, for example).
+# anything published by another lane (the generic ISO folders, the dated Arch
+# Linux ARM snapshots under mirror/ that the payload build and the acceptance
+# guest read from).
 prunable_prefixes() {
   aws s3 ls "s3://$R2_BUCKET/" --recursive --endpoint-url "$R2_ENDPOINT" --region auto 2>/dev/null |
     awk '{print $4}' |

@@ -3,6 +3,9 @@
 set -euo pipefail
 
 rootfs_url=${ARCHARM_ROOTFS_URL:-https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}
+# The dated Arch Linux ARM snapshot every package in the guest comes from; the
+# run passes it in. The rootfs above stays live because it is signed as a whole.
+mirror_url=${ARCHARM_MIRROR_URL:?ARCHARM_MIRROR_URL is not set}
 cache=/work/cache
 base=$cache/archarm-base.qcow2
 rootfs=$cache/ArchLinuxARM-aarch64-latest.tar.gz
@@ -13,7 +16,7 @@ base_id_file=$cache/archarm-base.id
 base_id=$(
   {
     sha256sum "$0" /work/ssh/id_ed25519.pub
-    printf '%s\n' "$rootfs_url"
+    printf '%s\n' "$rootfs_url" "$mirror_url"
   } | sha256sum | cut -d' ' -f1
 )
 
@@ -93,10 +96,7 @@ EOF
 
 rm -f "$mount_dir/etc/resolv.conf"
 cp -L /etc/resolv.conf "$mount_dir/etc/resolv.conf"
-cat >"$mount_dir/etc/pacman.d/mirrorlist" <<'EOF'
-Server = https://ca.us.mirror.archlinuxarm.org/$arch/$repo
-Server = https://fl.us.mirror.archlinuxarm.org/$arch/$repo
-EOF
+printf 'Server = %s\n' "$mirror_url" >"$mount_dir/etc/pacman.d/mirrorlist"
 
 for path in proc sys dev run; do
   mount --rbind "/$path" "$mount_dir/$path"
