@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""Emit the unsigned M1 support catalog for local signing.
+"""Emit the unsigned support catalog for local signing.
 
 The document this writes is the exact payload the app verifies: signing is a
-separate step (`catalog-signing.swift sign`) that needs the private
-catalog-signing key, which this repository deliberately does not contain.
+separate step (`catalog-signing.swift sign-keychain`) that needs the long-lived
+catalog-signing key, which lives in the operator's Keychain and never in this
+repository.
+
+Every per-release value comes from an inputs file (`--inputs`), so cutting a
+release never edits this script. `scripts/release-inputs.template.json` holds
+the current values.
 
 The catalog pins whole-file digests. When the payload was split for release
 delivery, the sibling `<payload>.partNN` files are emitted as an additional
 `parts` array on `payloadArtifact`; the whole-file digest and size stay
 authoritative and the whole-file URL becomes informational.
 
+Schema 4 carries no `expiresAt`: a signed catalog stays valid until a
+higher-sequence one replaces it. The monotonic `sequence` is the only
+machine-enforced guard.
+
 Usage:
-  make-unsigned-catalog.py --base-url URL --assets-dir DIR [--output FILE]
-                           [--validity-days N]
+  make-unsigned-catalog.py --base-url URL --assets-dir DIR --inputs FILE
+                           [--output FILE] [--now ISO8601]
 """
 from __future__ import annotations
 
@@ -23,45 +32,32 @@ import json
 import re
 from pathlib import Path
 
-ENGINE_NAME = "installer-v0.9.0-omarchy.14.tar.gz"
-METADATA_NAME = "installer_data.json"
-PAYLOAD_NAME = "omarchy-2026.09.02-aarch64-apple-silicon-asahi-os-package.zip"
+SCHEMA_VERSION = 4
 
-# Every Mac Asahi Linux supports today (M1 and M2 families). The 14-inch M1 Pro
-# stays first: it is the qualified reference machine. The Mac Pro (2023) and
-# all M3/M4 Macs are still work in progress upstream and are deliberately
-# absent, so the app keeps refusing them.
-DEVICE_IDENTIFIERS = [
-    "apple,j314s",  # MacBook Pro 14" M1 Pro (reference)
-    "apple,j314c",  # MacBook Pro 14" M1 Max
-    "apple,j316s",  # MacBook Pro 16" M1 Pro
-    "apple,j316c",  # MacBook Pro 16" M1 Max
-    "apple,j274",   # Mac mini M1
-    "apple,j293",   # MacBook Pro 13" M1
-    "apple,j313",   # MacBook Air M1
-    "apple,j456",   # iMac 24" M1 (4 ports)
-    "apple,j457",   # iMac 24" M1 (2 ports)
-    "apple,j375c",  # Mac Studio M1 Max
-    "apple,j375d",  # Mac Studio M1 Ultra
-    "apple,j413",   # MacBook Air 13" M2
-    "apple,j415",   # MacBook Air 15" M2
-    "apple,j493",   # MacBook Pro 13" M2
-    "apple,j473",   # Mac mini M2
-    "apple,j474s",  # Mac mini M2 Pro
-    "apple,j414s",  # MacBook Pro 14" M2 Pro
-    "apple,j414c",  # MacBook Pro 14" M2 Max
-    "apple,j416s",  # MacBook Pro 16" M2 Pro
-    "apple,j416c",  # MacBook Pro 16" M2 Max
-    "apple,j475c",  # Mac Studio M2 Max
-    "apple,j475d",  # Mac Studio M2 Ultra
-]
-DEVICE_IDENTIFIER = DEVICE_IDENTIFIERS[0]
-ASAHI_INSTALLER_TAG = "v0.9.0"
-ASAHI_INSTALLER_REVISION = "f0469cea0899f3efed8efead604174c7a53c4451"
-ASAHI_INSTALLER_DATA_REVISION = "42648e71423eba308d2e3e6228253eff679b068b"
-DOWNSTREAM_REVISION = "dff6311446439e1f29f0f2e6c0cf82a9a190e5bc"
-ENGINE_VERSION = "v0.9.0-omarchy.14"
-EVIDENCE_REVISION = "4.0.2-mac.1.19.090426"
+REQUIRED_INPUT_KEYS = frozenset(
+    {
+        "payload_name",
+        "engine_name",
+        "metadata_name",
+        "engine_version",
+        "evidence_revision",
+        "asahi_installer_tag",
+        "asahi_installer_revision",
+        "asahi_installer_data_revision",
+        "downstream_revision",
+        "device_identifiers",
+        "installer",
+    }
+)
+REQUIRED_INSTALLER_KEYS = frozenset(
+    {"minimum_version", "latest_version", "download_url"}
+)
+
+DEVICE_IDENTIFIER_PATTERN = re.compile(r"^apple,[0-9a-z]+$")
+EVIDENCE_REVISION_PATTERN = re.compile(r"^[0-9a-z.-]+$")
+INSTALLER_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+ASAHI_TAG_PATTERN = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
 
 MAXIMUM_PART_COUNT = 16
 PART_PATTERN = re.compile(r"\.part(\d{2})$")
@@ -159,9 +155,105 @@ def part_records(payload: Path, parts: list[Path], base_url: str) -> list[dict]:
     return records
 
 
+def parse_version(value: str) -> tuple[int, int, int]:
+    parts = value.split(".")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+def load_inputs(path: Path) -> dict:
+    """Read and fully validate the per-release inputs, failing closed."""
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"unsafe or missing inputs file: {path}")
+    try:
+        document = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"inputs file is not valid JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise SystemExit("inputs file must contain a JSON object")
+
+    keys = set(document)
+    missing = REQUIRED_INPUT_KEYS - keys
+    if missing:
+        raise SystemExit(f"inputs file is missing keys: {', '.join(sorted(missing))}")
+    unknown = keys - REQUIRED_INPUT_KEYS
+    if unknown:
+        raise SystemExit(f"inputs file has unknown keys: {', '.join(sorted(unknown))}")
+
+    for key in (
+        "payload_name",
+        "engine_name",
+        "metadata_name",
+        "engine_version",
+        "evidence_revision",
+        "asahi_installer_tag",
+    ):
+        value = document[key]
+        if not isinstance(value, str) or not value:
+            raise SystemExit(f"inputs {key} must be a non-empty string")
+    for key in ("payload_name", "engine_name", "metadata_name"):
+        name = document[key]
+        if "/" in name or name in {".", ".."}:
+            raise SystemExit(f"inputs {key} must be a plain file name: {name}")
+
+    if not EVIDENCE_REVISION_PATTERN.match(document["evidence_revision"]):
+        raise SystemExit(
+            "inputs evidence_revision must be lowercase [0-9a-z.-]: "
+            f"{document['evidence_revision']}"
+        )
+    if not ASAHI_TAG_PATTERN.match(document["asahi_installer_tag"]):
+        raise SystemExit(
+            f"inputs asahi_installer_tag must look like vX.Y.Z: "
+            f"{document['asahi_installer_tag']}"
+        )
+    for key in (
+        "asahi_installer_revision",
+        "asahi_installer_data_revision",
+        "downstream_revision",
+    ):
+        value = document[key]
+        if not isinstance(value, str) or not REVISION_PATTERN.match(value):
+            raise SystemExit(f"inputs {key} must be a 40-character hex revision")
+
+    identifiers = document["device_identifiers"]
+    if not isinstance(identifiers, list) or not identifiers:
+        raise SystemExit("inputs device_identifiers must be a non-empty list")
+    if len(set(identifiers)) != len(identifiers):
+        raise SystemExit("inputs device_identifiers contains duplicates")
+    for identifier in identifiers:
+        if not isinstance(identifier, str) or not DEVICE_IDENTIFIER_PATTERN.match(
+            identifier
+        ):
+            raise SystemExit(f"invalid device identifier: {identifier}")
+
+    installer = document["installer"]
+    if not isinstance(installer, dict):
+        raise SystemExit("inputs installer must be an object")
+    installer_keys = set(installer)
+    if installer_keys != REQUIRED_INSTALLER_KEYS:
+        raise SystemExit(
+            "inputs installer must have exactly "
+            f"{', '.join(sorted(REQUIRED_INSTALLER_KEYS))}"
+        )
+    for key in ("minimum_version", "latest_version"):
+        value = installer[key]
+        if not isinstance(value, str) or not INSTALLER_VERSION_PATTERN.match(value):
+            raise SystemExit(f"inputs installer.{key} must look like X.Y.Z: {value}")
+    if parse_version(installer["minimum_version"]) > parse_version(
+        installer["latest_version"]
+    ):
+        raise SystemExit(
+            "inputs installer.minimum_version is newer than installer.latest_version"
+        )
+    download_url = installer["download_url"]
+    if not isinstance(download_url, str) or not download_url.startswith("https://"):
+        raise SystemExit(f"inputs installer.download_url must be https: {download_url}")
+
+    return document
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Emit the unsigned M1 support catalog."
+        description="Emit the unsigned support catalog."
     )
     parser.add_argument(
         "--base-url",
@@ -175,15 +267,19 @@ def parse_arguments() -> argparse.Namespace:
         help="directory holding the engine, metadata, and payload assets",
     )
     parser.add_argument(
+        "--inputs",
+        required=True,
+        type=Path,
+        help="per-release inputs JSON (see release-inputs.template.json)",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="catalog path to write (default: <assets-dir>/catalog.json)",
     )
     parser.add_argument(
-        "--validity-days",
-        type=int,
-        default=90,
-        help="catalog validity window in days (default: 90)",
+        "--now",
+        help="override the issue time as YYYY-MM-DDTHH:MM:SSZ (tests only)",
     )
     arguments = parser.parse_args()
 
@@ -193,8 +289,6 @@ def parse_arguments() -> argparse.Namespace:
         raise SystemExit(
             f"--base-url must not end with a slash: {arguments.base_url}"
         )
-    if arguments.validity_days < 1:
-        raise SystemExit("--validity-days must be a positive integer")
     if not arguments.assets_dir.is_dir() or arguments.assets_dir.is_symlink():
         raise SystemExit(f"unsafe or missing assets directory: {arguments.assets_dir}")
     if arguments.output is None:
@@ -202,44 +296,59 @@ def parse_arguments() -> argparse.Namespace:
     return arguments
 
 
+def issue_time(override: str | None) -> datetime.datetime:
+    if override is None:
+        return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    try:
+        parsed = datetime.datetime.strptime(override, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as error:
+        raise SystemExit(f"--now must be YYYY-MM-DDTHH:MM:SSZ: {override}") from error
+    return parsed.replace(tzinfo=datetime.timezone.utc)
+
+
 def main() -> None:
     arguments = parse_arguments()
+    inputs = load_inputs(arguments.inputs)
     assets = arguments.assets_dir
-    engine = require_regular_file(assets / ENGINE_NAME)
-    metadata = require_regular_file(assets / METADATA_NAME)
-    payload = require_regular_file(assets / PAYLOAD_NAME)
+    engine = require_regular_file(assets / inputs["engine_name"])
+    metadata = require_regular_file(assets / inputs["metadata_name"])
+    payload = require_regular_file(assets / inputs["payload_name"])
 
     payload_artifact = artifact(payload, arguments.base_url)
     parts = discover_parts(payload)
     if parts:
         payload_artifact["parts"] = part_records(payload, parts, arguments.base_url)
 
-    issued = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
-    expires = issued + datetime.timedelta(days=arguments.validity_days)
+    issued = issue_time(arguments.now)
+    installer = inputs["installer"]
 
     catalog = {
-        "schemaVersion": 2,
+        "schemaVersion": SCHEMA_VERSION,
         "sequence": int(issued.timestamp()),
         "issuedAt": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "expiresAt": expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "installer": {
+            "minimumVersion": installer["minimum_version"],
+            "latestVersion": installer["latest_version"],
+            "downloadURL": installer["download_url"],
+        },
         "models": [
             {
                 "deviceIdentifier": device_identifier,
                 "status": "enabled",
-                "asahiInstallerTag": ASAHI_INSTALLER_TAG,
-                "asahiInstallerRevision": ASAHI_INSTALLER_REVISION,
-                "asahiInstallerDataRevision": ASAHI_INSTALLER_DATA_REVISION,
-                "downstreamRevision": DOWNSTREAM_REVISION,
-                "engineVersion": ENGINE_VERSION,
+                "asahiInstallerTag": inputs["asahi_installer_tag"],
+                "asahiInstallerRevision": inputs["asahi_installer_revision"],
+                "asahiInstallerDataRevision": inputs["asahi_installer_data_revision"],
+                "downstreamRevision": inputs["downstream_revision"],
+                "engineVersion": inputs["engine_version"],
                 "engineDigest": f"sha256:{digest(engine)}",
                 "metadataDigest": f"sha256:{digest(metadata)}",
                 "payloadDigest": f"sha256:{digest(payload)}",
-                "evidenceRevision": EVIDENCE_REVISION,
+                "evidenceRevision": inputs["evidence_revision"],
                 "engineArtifact": artifact(engine, arguments.base_url),
                 "metadataArtifact": artifact(metadata, arguments.base_url),
                 "payloadArtifact": payload_artifact,
             }
-            for device_identifier in DEVICE_IDENTIFIERS
+            for device_identifier in inputs["device_identifiers"]
         ],
     }
 
@@ -248,6 +357,8 @@ def main() -> None:
     print(f"unsigned_catalog={arguments.output}")
     print(f"unsigned_catalog_sha256={digest(arguments.output)}")
     print(f"sequence={catalog['sequence']}")
+    print(f"evidence_revision={inputs['evidence_revision']}")
+    print(f"models={len(catalog['models'])}")
     print(f"payload_parts={len(parts)}")
 
 

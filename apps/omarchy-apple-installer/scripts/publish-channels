@@ -1,0 +1,613 @@
+#!/bin/bash
+# Publish and promote the installer's release channels on Cloudflare R2.
+#
+# Two kinds of object live in the bucket. Everything under releases/ and
+# installer/<version>/ is immutable and never overwritten. Exactly four keys
+# are rewritten in place, and only through this tool:
+#
+#   channels/<channel>/catalog.signed.json
+#   channels/<channel>/channel.json
+#   installer/<channel>/Omarchy-MX-Mac-Installer.pkg
+#   installer/<channel>/installer.json
+#
+# The catalog and its signature travel as one envelope so a channel update is a
+# single atomic write: a reader can never see a new catalog beside the old
+# signature.
+set -euo pipefail
+
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+. "$script_directory/publish-m1-release"
+
+R2_BUCKET="${OMARCHY_R2_BUCKET:-omarchy-releases}"
+R2_ENDPOINT="${OMARCHY_R2_ENDPOINT:-https://ab85a8b9d88f084e66bf9d4a8ee5cf66.r2.cloudflarestorage.com}"
+PUBLIC_BASE="${OMARCHY_PUBLIC_BASE:-https://downloads.aicodelabs.com.au}"
+TRUST_ROOT="${OMARCHY_TRUST_ROOT:-$script_directory/../Release/trust-root.ed25519.pub}"
+SIGNING_TOOL="${OMARCHY_CATALOG_SIGNING_TOOL:-xcrun swift $script_directory/catalog-signing.swift}"
+PKG_FILE_NAME="Omarchy-MX-Mac-Installer.pkg"
+PKG_DOWNLOAD_NAME="Omarchy MX Mac Installer.pkg"
+NO_CACHE="no-cache, max-age=0, must-revalidate"
+
+scratch_root=""
+cleanup_scratch() {
+  [[ -z $scratch_root ]] || rm -rf "$scratch_root"
+}
+trap cleanup_scratch EXIT
+
+make_scratch() {
+  scratch_root=$(mktemp -d)
+  printf '%s\n' "$scratch_root"
+}
+
+channels_usage() {
+  cat <<'USAGE'
+Usage:
+  publish-channels envelope --catalog FILE --signature FILE --output FILE
+  publish-channels os-promote --tag TAG --to stable|rc [--minimum-sequence N] [--no-prune]
+  publish-channels app-publish --pkg FILE --version X.Y.Z [--to stable|rc]
+  publish-channels channel-status [--channel stable|rc|all]
+  publish-channels prune [--confirm]
+
+Credentials come from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or the Keychain
+items omarchy-r2-access-key-id and omarchy-r2-secret-access-key.
+USAGE
+  exit 64
+}
+
+validate_os_tag() {
+  [[ $1 =~ ^os-v[0-9]+\.[0-9]+\.[0-9]+-mac\.[0-9]+\.[0-9]{8}(\.[0-9]+)?$ ]] ||
+    die "invalid OS release tag: $1 (expected os-vX.Y.Z-mac.N.YYYYMMDD)"
+}
+
+validate_channel() {
+  [[ $1 == "stable" || $1 == "rc" ]] || die "invalid channel: $1"
+}
+
+validate_installer_version() {
+  [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid installer version: $1"
+}
+
+mutable_key_allowed() {
+  case $1 in
+    channels/stable/catalog.signed.json | channels/rc/catalog.signed.json) return 0 ;;
+    channels/stable/channel.json | channels/rc/channel.json) return 0 ;;
+    installer/stable/$PKG_FILE_NAME | installer/rc/$PKG_FILE_NAME) return 0 ;;
+    installer/stable/installer.json | installer/rc/installer.json) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+build_envelope() {
+  local catalog=$1 signature=$2 output=$3
+  require_file "$catalog"
+  require_file "$signature"
+  (( $(file_size "$signature") == 64 )) || die "a catalog signature must be 64 bytes"
+  python3 - "$catalog" "$signature" "$output" <<'PY'
+import base64
+import json
+import sys
+
+catalog, signature, output = sys.argv[1:4]
+document = {
+    "schema_version": 1,
+    "catalog": base64.b64encode(open(catalog, "rb").read()).decode("ascii"),
+    "signature": base64.b64encode(open(signature, "rb").read()).decode("ascii"),
+}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(document, stream, sort_keys=True, separators=(",", ":"))
+PY
+}
+
+decode_envelope() {
+  local envelope=$1 catalog=$2 signature=$3
+  require_file "$envelope"
+  python3 - "$envelope" "$catalog" "$signature" <<'PY'
+import base64
+import json
+import sys
+
+envelope, catalog, signature = sys.argv[1:4]
+document = json.load(open(envelope, encoding="utf-8"))
+if set(document) != {"schema_version", "catalog", "signature"}:
+    raise SystemExit("envelope has unexpected keys")
+if document["schema_version"] != 1:
+    raise SystemExit("unsupported envelope schema")
+open(catalog, "wb").write(base64.b64decode(document["catalog"], validate=True))
+open(signature, "wb").write(base64.b64decode(document["signature"], validate=True))
+PY
+}
+
+verify_catalog() {
+  local catalog=$1 signature=$2 result
+  require_file "$TRUST_ROOT"
+  result=$($SIGNING_TOOL verify "$TRUST_ROOT" "$catalog" "$signature" 2>/dev/null) ||
+    die "catalog signature does not verify against $TRUST_ROOT"
+  [[ $result == "catalog_signature=passed" ]] ||
+    die "unexpected verification result: $result"
+}
+
+catalog_field() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
+}
+
+# Every artifact a catalog names must already sit under the immutable prefix of
+# the tag being promoted, at exactly the size the catalog claims.
+assert_catalog_artifacts_published() {
+  local catalog=$1 tag=$2 expected_prefix="$PUBLIC_BASE/releases/$tag/"
+  local url size actual
+  while read -r url size; do
+    [[ $url == "$expected_prefix"* ]] ||
+      die "catalog names an artifact outside releases/$tag: $url"
+    actual=$(curl -fsSLI -H 'Cache-Control: no-cache' "$url" 2>/dev/null |
+      awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub(/\r/,"",$2); print $2}' | tail -1) ||
+      die "artifact is not published: $url"
+    [[ -n $actual ]] || die "artifact is not published: $url"
+    (( actual == size )) ||
+      die "$url is $actual bytes but the catalog claims $size"
+    echo "  verified $url"
+  done < <(python3 - "$catalog" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1]))
+seen = set()
+for model in catalog["models"]:
+    for role in ("engineArtifact", "metadataArtifact", "payloadArtifact"):
+        artifact = model.get(role)
+        if not artifact:
+            continue
+        for record in [artifact, *artifact.get("parts", [])]:
+            key = (record["sourceURL"], record["sizeBytes"])
+            if key in seen:
+                continue
+            seen.add(key)
+            print(record["sourceURL"], record["sizeBytes"])
+PY
+  )
+}
+
+fetch_public() {
+  local path=$1 output=$2 status
+  status=$(curl -fsSL -H 'Cache-Control: no-cache' -o "$output" \
+    -w '%{http_code}' "$PUBLIC_BASE/$path" 2>/dev/null) || status=""
+  [[ $status == "200" ]] || return 1
+  return 0
+}
+
+put_object() {
+  local source=$1 key=$2
+  shift 2
+  aws s3 cp "$source" "s3://$R2_BUCKET/$key" \
+    --endpoint-url "$R2_ENDPOINT" --region auto --only-show-errors "$@"
+}
+
+put_mutable() {
+  local source=$1 key=$2 content_type=$3
+  shift 3
+  mutable_key_allowed "$key" || die "refusing to overwrite a key that must stay immutable: $key"
+  put_object "$source" "$key" --cache-control "$NO_CACHE" \
+    --content-type "$content_type" "$@"
+  echo "  wrote $key"
+}
+
+put_immutable() {
+  local source=$1 key=$2 remote local_size
+  shift 2
+  local_size=$(file_size "$source")
+  remote=$(aws s3api head-object --bucket "$R2_BUCKET" --key "$key" \
+    --endpoint-url "$R2_ENDPOINT" --region auto \
+    --query ContentLength --output text 2>/dev/null) || remote=""
+  if [[ -z $remote ]]; then
+    put_object "$source" "$key" "$@"
+    echo "  uploaded $key"
+  elif (( remote == local_size )); then
+    echo "  matched $key ($remote bytes)"
+  else
+    die "published $key is $remote bytes but staged bytes are $local_size; publish a new version"
+  fi
+}
+
+verify_back() {
+  local path=$1 expected=$2 actual scratch
+  scratch=$(mktemp)
+  fetch_public "$path" "$scratch" || {
+    rm -f "$scratch"
+    die "could not read back $PUBLIC_BASE/$path"
+  }
+  actual=$(file_digest "$scratch")
+  rm -f "$scratch"
+  [[ $actual == "$expected" ]] ||
+    die "$PUBLIC_BASE/$path serves $actual, expected $expected"
+  echo "  verified $PUBLIC_BASE/$path"
+}
+
+os_promote() {
+  local tag="" channel="" minimum_sequence=0 prune_after=1
+  while (( $# > 0 )); do
+    case $1 in
+      --tag) tag=${2:-}; shift 2 ;;
+      --to) channel=${2:-}; shift 2 ;;
+      --minimum-sequence) minimum_sequence=${2:-}; shift 2 ;;
+      --no-prune) prune_after=0; shift ;;
+      *) channels_usage ;;
+    esac
+  done
+  [[ -n $tag && -n $channel ]] || channels_usage
+  validate_os_tag "$tag"
+  validate_channel "$channel"
+  command -v aws >/dev/null || die "missing command: aws"
+
+  local work
+  work=$(make_scratch)
+
+  echo "Reading releases/$tag/catalog.signed.json"
+  fetch_public "releases/$tag/catalog.signed.json" "$work/candidate.json" ||
+    die "releases/$tag/catalog.signed.json is not published"
+  decode_envelope "$work/candidate.json" "$work/catalog" "$work/signature"
+  verify_catalog "$work/catalog" "$work/signature"
+
+  local sequence
+  sequence=$(catalog_field "$work/catalog" sequence)
+  [[ $sequence =~ ^[0-9]+$ ]] || die "catalog sequence is not a number"
+  (( sequence > minimum_sequence )) ||
+    die "catalog sequence $sequence is not above the required floor $minimum_sequence"
+
+  echo "Checking every artifact the catalog names"
+  assert_catalog_artifacts_published "$work/catalog" "$tag"
+
+  local live_sequence=0 previous_tag=""
+  if fetch_public "channels/$channel/catalog.signed.json" "$work/live.json"; then
+    if [[ $(file_digest "$work/candidate.json") == "$(file_digest "$work/live.json")" ]]; then
+      echo "channels/$channel already serves these exact bytes"
+      return 0
+    fi
+    decode_envelope "$work/live.json" "$work/live-catalog" "$work/live-signature"
+    verify_catalog "$work/live-catalog" "$work/live-signature"
+    live_sequence=$(catalog_field "$work/live-catalog" sequence)
+    (( sequence > live_sequence )) ||
+      die "candidate sequence $sequence does not exceed the live $channel sequence $live_sequence"
+    previous_tag=$(python3 -c '
+import json, re, sys
+for model in json.load(open(sys.argv[1]))["models"]:
+    m = re.search(r"/releases/([^/]+)/", model["payloadArtifact"]["sourceURL"])
+    if m:
+        print(m.group(1)); break
+' "$work/live-catalog")
+  else
+    echo "channels/$channel is empty; this is its first catalog"
+  fi
+
+  r2_credentials
+  confirm_publication "$tag" "r2:$R2_BUCKET/channels/$channel" "catalog.signed.json channel.json"
+
+  python3 - "$work/channel.json" "$channel" "$tag" "$sequence" \
+    "$(file_digest "$work/catalog")" "$previous_tag" <<'PY'
+import datetime
+import json
+import sys
+
+output, channel, tag, sequence, catalog_sha256, previous_tag = sys.argv[1:7]
+document = {
+    "schema_version": 1,
+    "channel": channel,
+    "os_tag": tag,
+    "sequence": int(sequence),
+    "catalog_sha256": catalog_sha256,
+    # The set this promotion superseded stays published as rollback material.
+    "previous_os_tag": previous_tag or None,
+    "promoted_at": datetime.datetime.now(datetime.timezone.utc)
+    .replace(microsecond=0)
+    .strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(document, stream, indent=2)
+    stream.write("\n")
+PY
+
+  # One atomic write flips the channel; the pointer file is descriptive only.
+  put_mutable "$work/candidate.json" "channels/$channel/catalog.signed.json" application/json
+  put_mutable "$work/channel.json" "channels/$channel/channel.json" application/json
+  verify_back "channels/$channel/catalog.signed.json" "$(file_digest "$work/candidate.json")"
+  verify_back "channels/$channel/channel.json" "$(file_digest "$work/channel.json")"
+
+  echo "channel_sequence=$sequence"
+  echo "channel_os_tag=$tag"
+  echo "channel_previous_sequence=$live_sequence"
+
+  # A new stable release is the moment the ones before it stop mattering, so
+  # reclaim them here rather than as a chore someone has to remember. A bucket
+  # lock that still protects them is reported, not treated as a failed release.
+  if (( prune_after )) && [[ $channel == "stable" ]]; then
+    echo
+    echo "Pruning release sets nothing references any more"
+    if ! OMARCHY_PUBLISH_ASSUME_YES=prune prune --confirm; then
+      echo "  (pruning was refused; the promotion itself succeeded)" >&2
+    fi
+  fi
+}
+
+app_publish() {
+  local pkg="" version="" channel="stable"
+  while (( $# > 0 )); do
+    case $1 in
+      --pkg) pkg=${2:-}; shift 2 ;;
+      --version) version=${2:-}; shift 2 ;;
+      --to) channel=${2:-}; shift 2 ;;
+      *) channels_usage ;;
+    esac
+  done
+  [[ -n $pkg && -n $version ]] || channels_usage
+  require_file "$pkg"
+  validate_installer_version "$version"
+  validate_channel "$channel"
+  command -v aws >/dev/null || die "missing command: aws"
+
+  # A package that is not notarized and stapled would fail on the far side of
+  # a download, so it never reaches the bucket.
+  pkgutil --check-signature "$pkg" >/dev/null 2>&1 ||
+    die "pkg is not signed: $pkg"
+  xcrun stapler validate "$pkg" >/dev/null 2>&1 ||
+    die "pkg has no stapled notarization ticket: $pkg"
+
+  local work digest immutable_key
+  work=$(make_scratch)
+  digest=$(file_digest "$pkg")
+  printf '%s  %s\n' "$digest" "Omarchy-MX-Mac-Installer-$version.pkg" >"$work/pkg.sha256"
+  immutable_key="installer/$version/Omarchy-MX-Mac-Installer-$version.pkg"
+
+  python3 - "$work/installer.json" "$version" "$digest" "$(file_size "$pkg")" \
+    "$PUBLIC_BASE/$immutable_key" <<'PY'
+import datetime
+import json
+import sys
+
+output, version, sha256, size_bytes, source = sys.argv[1:6]
+document = {
+    "schema_version": 1,
+    "version": version,
+    "sha256": sha256,
+    "size_bytes": int(size_bytes),
+    "published_at": datetime.datetime.now(datetime.timezone.utc)
+    .replace(microsecond=0)
+    .strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "source": source,
+}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(document, stream, indent=2)
+    stream.write("\n")
+PY
+
+  r2_credentials
+  confirm_publication "installer-v$version" "r2:$R2_BUCKET/installer/$channel" \
+    "$PKG_FILE_NAME installer.json"
+
+  put_immutable "$pkg" "$immutable_key" --content-type application/octet-stream
+  put_immutable "$work/pkg.sha256" "$immutable_key.sha256" --content-type text/plain
+  put_mutable "$pkg" "installer/$channel/$PKG_FILE_NAME" application/octet-stream \
+    --content-disposition "attachment; filename=\"$PKG_DOWNLOAD_NAME\""
+  put_mutable "$work/installer.json" "installer/$channel/installer.json" application/json
+  verify_back "installer/$channel/$PKG_FILE_NAME" "$digest"
+  verify_back "installer/$channel/installer.json" "$(file_digest "$work/installer.json")"
+
+  echo "installer_version=$version"
+  echo "installer_sha256=$digest"
+}
+
+channel_status() {
+  local requested="all"
+  while (( $# > 0 )); do
+    case $1 in
+      --channel) requested=${2:-}; shift 2 ;;
+      *) channels_usage ;;
+    esac
+  done
+  [[ $requested == "all" ]] || validate_channel "$requested"
+
+  local work channels channel failures=0
+  work=$(make_scratch)
+  if [[ $requested == "all" ]]; then
+    channels="stable rc"
+  else
+    channels=$requested
+  fi
+
+  for channel in $channels; do
+    echo "channel $channel"
+    if fetch_public "channels/$channel/catalog.signed.json" "$work/$channel.json"; then
+      decode_envelope "$work/$channel.json" "$work/$channel.catalog" "$work/$channel.sig"
+      if verify_catalog "$work/$channel.catalog" "$work/$channel.sig" >/dev/null 2>&1; then
+        echo "  catalog_sequence=$(catalog_field "$work/$channel.catalog" sequence)"
+        echo "  catalog_schema=$(catalog_field "$work/$channel.catalog" schemaVersion)"
+        echo "  catalog_sha256=$(file_digest "$work/$channel.catalog")"
+      else
+        echo "  catalog_signature=FAILED"
+        failures=$(( failures + 1 ))
+      fi
+    else
+      echo "  catalog=absent"
+    fi
+    if fetch_public "installer/$channel/installer.json" "$work/$channel.installer.json"; then
+      echo "  installer_version=$(catalog_field "$work/$channel.installer.json" version)"
+      echo "  installer_sha256=$(catalog_field "$work/$channel.installer.json" sha256)"
+    else
+      echo "  installer=absent"
+    fi
+  done
+
+  if [[ $requested == "all" ]]; then
+    if [[ -f $work/stable.json && -f $work/rc.json ]] &&
+      [[ $(file_digest "$work/stable.json") == "$(file_digest "$work/rc.json")" ]]; then
+      echo "stable_equals_rc=yes"
+    else
+      echo "stable_equals_rc=no"
+    fi
+  fi
+  (( failures == 0 )) || die "$failures channel(s) failed verification"
+}
+
+# Everything a live channel can reach, expressed as bucket prefixes. A release
+# set is reachable when any channel catalog names an artifact under it; an
+# installer version is reachable when any channel's installer.json points at it.
+referenced_prefixes() {
+  local work=$1 channel envelope catalog signature pointer
+  for channel in stable rc rc edge; do
+    envelope="$work/$channel.env.json"
+    if fetch_public "channels/$channel/catalog.signed.json" "$envelope"; then
+      catalog="$work/$channel.catalog"; signature="$work/$channel.sig"
+      decode_envelope "$envelope" "$catalog" "$signature"
+      python3 - "$catalog" <<'PY'
+import json, re, sys
+catalog = json.load(open(sys.argv[1]))
+seen = set()
+for model in catalog["models"]:
+    for role in ("engineArtifact", "metadataArtifact", "payloadArtifact", "repairManifestArtifact"):
+        artifact = model.get(role)
+        if not artifact:
+            continue
+        for record in [artifact, *artifact.get("parts", [])]:
+            m = re.search(r"/(releases/[^/]+)/", record["sourceURL"])
+            if m and m.group(1) not in seen:
+                seen.add(m.group(1))
+                print(m.group(1))
+PY
+    fi
+    pointer="$work/$channel.channel.json"
+    if fetch_public "channels/$channel/channel.json" "$pointer"; then
+      python3 -c '
+import json, sys
+previous = json.load(open(sys.argv[1])).get("previous_os_tag")
+if previous:
+    print(f"releases/{previous}")
+' "$pointer"
+    fi
+    pointer="$work/$channel.installer.json"
+    if fetch_public "installer/$channel/installer.json" "$pointer"; then
+      python3 - "$pointer" <<'PY'
+import json, re, sys
+source = json.load(open(sys.argv[1])).get("source", "")
+m = re.search(r"/(installer/[0-9]+\.[0-9]+\.[0-9]+)/", source)
+if m:
+    print(m.group(1))
+PY
+    fi
+  done | sort -u
+}
+
+# Bucket prefixes this tool is allowed to remove: immutable release sets and
+# immutable installer versions, and nothing else. Channel objects and the
+# stable/rc/edge installer downloads are never candidates, and neither is
+# anything published by another lane (the generic ISO folders, for example).
+prunable_prefixes() {
+  aws s3 ls "s3://$R2_BUCKET/" --recursive --endpoint-url "$R2_ENDPOINT" --region auto 2>/dev/null |
+    awk '{print $4}' |
+    python3 -c '
+import re, sys
+seen = set()
+for line in sys.stdin:
+    key = line.strip()
+    m = re.match(r"^(releases/(?:os-)?v[0-9][^/]*|installer/[0-9]+\.[0-9]+\.[0-9]+)/", key)
+    if m and m.group(1) not in seen:
+        seen.add(m.group(1))
+        print(m.group(1))
+'
+}
+
+prefix_size() {
+  aws s3 ls "s3://$R2_BUCKET/$1/" --recursive --endpoint-url "$R2_ENDPOINT" --region auto 2>/dev/null |
+    awk '{b+=$3} END {printf "%d", b}'
+}
+
+prune() {
+  local confirm=0
+  while (( $# > 0 )); do
+    case $1 in
+      --confirm) confirm=1; shift ;;
+      *) channels_usage ;;
+    esac
+  done
+  command -v aws >/dev/null || die "missing command: aws"
+  r2_credentials
+
+  local work
+  work=$(make_scratch)
+  referenced_prefixes "$work" >"$work/referenced"
+  prunable_prefixes >"$work/candidates"
+  [[ -s $work/candidates ]] || die "could not list the bucket"
+
+  local prefix total=0 size
+  echo "Kept — served by a channel now, or served just before the current release:"
+  while read -r prefix; do
+    echo "  $prefix"
+  done <"$work/referenced"
+  echo "Delete:"
+  : >"$work/delete"
+  while read -r prefix; do
+    grep -qx "$prefix" "$work/referenced" && continue
+    size=$(prefix_size "$prefix")
+    total=$(( total + size ))
+    printf '  %6.1f GB  %s\n' "$(python3 -c "print($size/1e9)")" "$prefix"
+    echo "$prefix" >>"$work/delete"
+  done <"$work/candidates"
+  if [[ ! -s $work/delete ]]; then
+    echo "  nothing"
+    return 0
+  fi
+  printf 'Total to delete: %.1f GB\n' "$(python3 -c "print($total/1e9)")"
+
+  if (( ! confirm )); then
+    echo "Dry run. Re-run with --confirm to delete."
+    return 0
+  fi
+  confirm_publication "prune" "r2:$R2_BUCKET" "$(tr '\n' ' ' <"$work/delete")"
+  while read -r prefix; do
+    # Belt and braces: never remove something a channel reaches, even if the
+    # channel changed between the plan and the deletion.
+    if referenced_prefixes "$work" | grep -qx "$prefix"; then
+      die "refusing to delete $prefix: a channel now references it"
+    fi
+    # A bucket lock refuses the delete per object. Stop at the first one and
+    # say what to change, rather than printing one refusal per file.
+    if ! output=$(aws s3 rm "s3://$R2_BUCKET/$prefix/" --recursive \
+      --endpoint-url "$R2_ENDPOINT" --region auto --only-show-errors 2>&1); then
+      if [[ $output == *ObjectLockedByBucketPolicy* ]]; then
+        echo "publish-channels: $prefix is protected by the bucket's lock rule. Pruning needs that rule to \
+expire objects by age (for example 7 days) instead of holding them indefinitely; change it in \
+Cloudflare R2 > omarchy-releases > Settings > Bucket lock, then re-run." >&2
+        return 1
+      fi
+      echo "publish-channels: could not remove $prefix: $output" >&2
+      return 1
+    fi
+    echo "  removed $prefix"
+  done <"$work/delete"
+}
+
+channels_main() {
+  (( $# > 0 )) || channels_usage
+  local subcommand=$1
+  shift
+  case $subcommand in
+    envelope)
+      local catalog="" signature="" output=""
+      while (( $# > 0 )); do
+        case $1 in
+          --catalog) catalog=${2:-}; shift 2 ;;
+          --signature) signature=${2:-}; shift 2 ;;
+          --output) output=${2:-}; shift 2 ;;
+          *) channels_usage ;;
+        esac
+      done
+      [[ -n $catalog && -n $signature && -n $output ]] || channels_usage
+      verify_catalog "$catalog" "$signature"
+      build_envelope "$catalog" "$signature" "$output"
+      echo "envelope=$output"
+      ;;
+    os-promote) os_promote "$@" ;;
+    app-publish) app_publish "$@" ;;
+    channel-status) channel_status "$@" ;;
+    prune) prune "$@" ;;
+    *) channels_usage ;;
+  esac
+}
+
+channels_main "$@"

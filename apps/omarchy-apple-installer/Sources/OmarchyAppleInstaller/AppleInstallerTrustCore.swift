@@ -223,6 +223,10 @@ public struct ValidatedSupportCatalog: Sendable {
     acceptedIdentity.sequence
   }
 
+  public var installerCompatibility: InstallerCompatibility? {
+    catalog.installerCompatibility
+  }
+
   public func admission(for deviceIdentifier: String) -> ModelAdmission {
     guard let record = catalog.record(for: deviceIdentifier) else {
       return .unsupported(deviceIdentifier: deviceIdentifier)

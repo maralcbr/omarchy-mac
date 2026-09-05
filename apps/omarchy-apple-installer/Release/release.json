@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "default_channel": "stable",
+  "channels": {
+    "stable": {
+      "catalog_url": "https://downloads.aicodelabs.com.au/channels/stable/catalog.signed.json"
+    },
+    "rc": {
+      "catalog_url": "https://downloads.aicodelabs.com.au/channels/rc/catalog.signed.json"
+    }
+  },
+  "trust_root_fingerprint": "sha256:0e86a878c2445009981a182a4642ec22ae14ab4d8365fad4b038cafc4802dc1b",
+  "helper_mach_service_name": "com.omarchy.mx.installer.helper",
+  "helper_code_signing_requirement": "anchor apple generic and identifier \"com.omarchy.mx.installer.helper\" and certificate leaf[subject.OU] = \"T2C384FJBD\""
+}

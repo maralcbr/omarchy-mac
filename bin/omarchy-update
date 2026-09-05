@@ -64,10 +64,13 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
     omarchy-update-asahi-repository --yes
     repository_status=$?
     set -e
+    # A repoint that fails leaves the previous signed snapshot pinned, which is
+    # still a valid repository, so the system upgrade below carries on rather
+    # than taking the whole update down with it.
     if (( repository_status == 3 )); then
       echo "Apple Silicon package repository update deferred because its release listing is unavailable." >&2
     elif (( repository_status != 0 )); then
-      exit "$repository_status"
+      echo "Apple Silicon package repository update failed; continuing with the pinned snapshot." >&2
     fi
   fi
   omarchy-update-keyring

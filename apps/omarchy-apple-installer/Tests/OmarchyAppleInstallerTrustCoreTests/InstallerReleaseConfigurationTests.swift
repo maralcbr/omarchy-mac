@@ -15,14 +15,128 @@
       )
 
       XCTAssertEqual(
-        configuration.catalogURL.absoluteString,
-        "https://releases.omarchy.example/apple/catalog.json"
+        configuration.catalogURL(for: .stable).absoluteString,
+        "https://releases.omarchy.example/channels/stable/catalog.signed.json"
       )
+      XCTAssertEqual(
+        configuration.catalogURL(for: .rc).absoluteString,
+        "https://releases.omarchy.example/channels/rc/catalog.signed.json"
+      )
+      XCTAssertEqual(configuration.defaultChannel, .stable)
       XCTAssertEqual(configuration.trustRoot.fingerprint, fingerprint)
       XCTAssertEqual(
         configuration.helperMachServiceName,
         InstallerProductIdentity.helperMachServiceName
       )
+    }
+
+    func testSchemaOneDescriptorIsRejected() throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      let legacy = Data(
+        """
+        {"schema_version":1,"catalog_url":"https://releases.omarchy.example/apple/catalog.json","catalog_signature_url":"https://releases.omarchy.example/apple/catalog.json.sig","trust_root_fingerprint":"\(digest(key))","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
+        """.utf8
+      )
+
+      XCTAssertThrowsError(
+        try InstallerReleaseConfigurationLoader().load(
+          descriptor: legacy,
+          trustRootPublicKey: key
+        )
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerReleaseConfigurationError,
+          .invalidDescriptor
+        )
+      }
+    }
+
+    func testDescriptorsMissingAChannelFailClosed() throws {
+      try assertDescriptorRejected { value in
+        value["channels"] = [
+          "stable": ["catalog_url": "https://releases.omarchy.example/s.json"]
+        ]
+      }
+    }
+
+    func testDescriptorsWithAnUnknownChannelFailClosed() throws {
+      try assertDescriptorRejected { value in
+        var channels = value["channels"] as! [String: Any]
+        channels["nightly"] = [
+          "catalog_url": "https://releases.omarchy.example/n.json"
+        ]
+        value["channels"] = channels
+      }
+    }
+
+    func testDescriptorsWithAnUnknownChannelFieldFailClosed() throws {
+      try assertDescriptorRejected { value in
+        var channels = value["channels"] as! [String: Any]
+        channels["rc"] = [
+          "catalog_url": "https://releases.omarchy.example/b.json",
+          "catalog_signature_url": "https://releases.omarchy.example/b.sig",
+        ]
+        value["channels"] = channels
+      }
+    }
+
+    func testAnUnknownDefaultChannelFailsClosed() throws {
+      try assertDescriptorRejected { value in
+        value["default_channel"] = "nightly"
+      }
+    }
+
+    func testIdenticalChannelURLsFailClosed() throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      var value = try XCTUnwrap(
+        JSONSerialization.jsonObject(
+          with: descriptor(fingerprint: digest(key))
+        ) as? [String: Any]
+      )
+      let shared = "https://releases.omarchy.example/channels/stable/catalog.signed.json"
+      value["channels"] = [
+        "stable": ["catalog_url": shared],
+        "rc": ["catalog_url": shared],
+      ]
+      let altered = try JSONSerialization.data(withJSONObject: value)
+
+      XCTAssertThrowsError(
+        try InstallerReleaseConfigurationLoader().load(
+          descriptor: altered,
+          trustRootPublicKey: key
+        )
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerReleaseConfigurationError,
+          .invalidURL("channels")
+        )
+      }
+    }
+
+    func testAPlainHTTPChannelURLFailsClosed() throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      var value = try XCTUnwrap(
+        JSONSerialization.jsonObject(
+          with: descriptor(fingerprint: digest(key))
+        ) as? [String: Any]
+      )
+      value["channels"] = [
+        "stable": ["catalog_url": "http://releases.omarchy.example/s.json"],
+        "rc": ["catalog_url": "https://releases.omarchy.example/b.json"],
+      ]
+      let altered = try JSONSerialization.data(withJSONObject: value)
+
+      XCTAssertThrowsError(
+        try InstallerReleaseConfigurationLoader().load(
+          descriptor: altered,
+          trustRootPublicKey: key
+        )
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerReleaseConfigurationError,
+          .invalidURL("channels.stable.catalog_url")
+        )
+      }
     }
 
     func testUnknownDescriptorFieldFailsClosed() throws {
@@ -90,39 +204,96 @@
       }
     }
 
-    func testCatalogAndSignatureDownloadInParallelWithBounds() async throws {
+    func testChannelEnvelopeDownloadsAndDecodes() async throws {
       let configuration = try configuration()
       let catalog = Data("signed catalog".utf8)
       let signature = Data(repeating: 7, count: 64)
       let fetcher = InstallerReleaseCatalogFetcher(
         downloader: FixtureReleaseDownloader(values: [
-          configuration.catalogURL: catalog,
-          configuration.catalogSignatureURL: signature,
+          configuration.catalogURL(for: .stable): envelope(
+            catalog: catalog,
+            signature: signature
+          )
         ])
       )
 
-      let result = try await fetcher.fetch(configuration: configuration)
+      let result = try await fetcher.fetch(
+        configuration: configuration,
+        channel: .stable
+      )
 
       XCTAssertEqual(result.payload, catalog)
       XCTAssertEqual(result.signature, signature)
+    }
+
+    func testBetaChannelReadsTheBetaObject() async throws {
+      let configuration = try configuration()
+      let catalog = Data("rc catalog".utf8)
+      let signature = Data(repeating: 4, count: 64)
+      let fetcher = InstallerReleaseCatalogFetcher(
+        downloader: FixtureReleaseDownloader(values: [
+          configuration.catalogURL(for: .rc): envelope(
+            catalog: catalog,
+            signature: signature
+          )
+        ])
+      )
+
+      let result = try await fetcher.fetch(
+        configuration: configuration,
+        channel: .rc
+      )
+
+      XCTAssertEqual(result.payload, catalog)
     }
 
     func testShortCatalogSignatureFailsClosed() async throws {
       let configuration = try configuration()
       let fetcher = InstallerReleaseCatalogFetcher(
         downloader: FixtureReleaseDownloader(values: [
-          configuration.catalogURL: Data("catalog".utf8),
-          configuration.catalogSignatureURL: Data(repeating: 3, count: 63),
+          configuration.catalogURL(for: .stable): envelope(
+            catalog: Data("catalog".utf8),
+            signature: Data(repeating: 3, count: 63)
+          )
         ])
       )
 
       await assertThrowsErrorAsync(
-        try await fetcher.fetch(configuration: configuration)
+        try await fetcher.fetch(configuration: configuration, channel: .stable)
       ) {
         XCTAssertEqual(
           $0 as? InstallerReleaseConfigurationError,
           .invalidCatalogSignature
         )
+      }
+    }
+
+    func testMalformedEnvelopesFailClosed() async throws {
+      let configuration = try configuration()
+      let signature = Data(repeating: 7, count: 64).base64EncodedString()
+      let bodies = [
+        #"{"schema_version":1,"catalog":"!!not base64!!","signature":"\#(signature)"}"#,
+        #"{"schema_version":2,"catalog":"Y2F0YWxvZw==","signature":"\#(signature)"}"#,
+        #"{"schema_version":1,"catalog":"Y2F0YWxvZw=="}"#,
+        #"{"schema_version":1,"catalog":"Y2F0YWxvZw==","signature":"\#(signature)","extra":1}"#,
+        #"{"schema_version":1,"catalog":"","signature":"\#(signature)"}"#,
+        "not json at all",
+      ]
+
+      for body in bodies {
+        let fetcher = InstallerReleaseCatalogFetcher(
+          downloader: FixtureReleaseDownloader(values: [
+            configuration.catalogURL(for: .stable): Data(body.utf8)
+          ])
+        )
+        await assertThrowsErrorAsync(
+          try await fetcher.fetch(
+            configuration: configuration,
+            channel: .stable
+          )
+        ) {
+          XCTAssertNotNil($0 as? InstallerReleaseConfigurationError, body)
+        }
       }
     }
 
@@ -174,7 +345,7 @@
         .load(from: root)
       let result = try await InstallerReleaseCatalogFetcher(
         downloader: FixtureReleaseDownloader(values: [:])
-      ).fetch(configuration: configuration)
+      ).fetch(configuration: configuration, channel: .stable)
 
       XCTAssertEqual(result.payload, catalog)
       XCTAssertEqual(result.signature, signature)
@@ -242,10 +413,49 @@
       )
     }
 
+    private func assertDescriptorRejected(
+      _ mutate: (inout [String: Any]) -> Void,
+      file: StaticString = #filePath,
+      line: UInt = #line
+    ) throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      var value = try XCTUnwrap(
+        JSONSerialization.jsonObject(
+          with: descriptor(fingerprint: digest(key))
+        ) as? [String: Any]
+      )
+      mutate(&value)
+      let altered = try JSONSerialization.data(withJSONObject: value)
+
+      XCTAssertThrowsError(
+        try InstallerReleaseConfigurationLoader().load(
+          descriptor: altered,
+          trustRootPublicKey: key
+        ),
+        file: file,
+        line: line
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerReleaseConfigurationError,
+          .invalidDescriptor,
+          file: file,
+          line: line
+        )
+      }
+    }
+
+    private func envelope(catalog: Data, signature: Data) -> Data {
+      Data(
+        """
+        {"schema_version":1,"catalog":"\(catalog.base64EncodedString())","signature":"\(signature.base64EncodedString())"}
+        """.utf8
+      )
+    }
+
     private func descriptor(fingerprint: String) -> Data {
       Data(
         """
-        {"schema_version":1,"catalog_url":"https://releases.omarchy.example/apple/catalog.json","catalog_signature_url":"https://releases.omarchy.example/apple/catalog.json.sig","trust_root_fingerprint":"\(fingerprint)","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
+        {"schema_version":2,"default_channel":"stable","channels":{"stable":{"catalog_url":"https://releases.omarchy.example/channels/stable/catalog.signed.json"},"rc":{"catalog_url":"https://releases.omarchy.example/channels/rc/catalog.signed.json"}},"trust_root_fingerprint":"\(fingerprint)","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
         """.utf8
       )
     }

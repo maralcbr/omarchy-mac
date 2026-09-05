@@ -66,15 +66,45 @@ public struct PinnedInstallerDelivery: Equatable, Sendable {
   }
 }
 
+/// Which installer versions a catalog accepts, and where to get a current one.
+///
+/// The block is optional and additive: a catalog without it places no
+/// constraint on the installer.
+public struct InstallerCompatibility: Equatable, Sendable {
+  public let minimumVersion: InstallerVersion
+  public let latestVersion: InstallerVersion
+  public let downloadURL: URL
+
+  public init(
+    minimumVersion: InstallerVersion,
+    latestVersion: InstallerVersion,
+    downloadURL: URL
+  ) {
+    self.minimumVersion = minimumVersion
+    self.latestVersion = latestVersion
+    self.downloadURL = downloadURL
+  }
+
+  public func accepts(_ version: InstallerVersion) -> Bool {
+    version >= minimumVersion
+  }
+}
+
 struct SupportCatalog: Equatable, Sendable {
   static let empty = SupportCatalog(sequence: 0, records: [:])
 
   let sequence: UInt64
+  let installerCompatibility: InstallerCompatibility?
   private let records: [String: PinnedInstallerRecord]
 
-  init(sequence: UInt64, records: [String: PinnedInstallerRecord]) {
+  init(
+    sequence: UInt64,
+    records: [String: PinnedInstallerRecord],
+    installerCompatibility: InstallerCompatibility? = nil
+  ) {
     self.sequence = sequence
     self.records = records
+    self.installerCompatibility = installerCompatibility
   }
 
   func record(for deviceIdentifier: String) -> PinnedInstallerRecord? {
@@ -123,21 +153,31 @@ struct SignedSupportCatalogVerifier: Sendable {
       throw SupportCatalogError.invalidPayload
     }
 
-    guard [1, 2, 3].contains(manifest.schemaVersion) else {
+    guard [1, 2, 3, 4].contains(manifest.schemaVersion) else {
       throw SupportCatalogError.unsupportedSchema(manifest.schemaVersion)
     }
     guard manifest.sequence > 0 else {
       throw SupportCatalogError.invalidSequence
     }
-    guard manifest.issuedAt < manifest.expiresAt else {
-      throw SupportCatalogError.invalidField("expiresAt")
+    if let expiresAt = manifest.expiresAt {
+      guard manifest.issuedAt < expiresAt else {
+        throw SupportCatalogError.invalidField("expiresAt")
+      }
+      guard manifest.issuedAt <= now else {
+        throw SupportCatalogError.notYetValid
+      }
+      guard now < expiresAt else {
+        throw SupportCatalogError.expired
+      }
+    } else {
+      // Schema 4 catalogs never expire, so a Mac whose clock is behind — one
+      // that has not reached a time server yet — must still install. The
+      // monotonic sequence is the guard that matters.
+      guard manifest.schemaVersion >= 4 else {
+        throw SupportCatalogError.invalidField("expiresAt")
+      }
     }
-    guard manifest.issuedAt <= now else {
-      throw SupportCatalogError.notYetValid
-    }
-    guard now < manifest.expiresAt else {
-      throw SupportCatalogError.expired
-    }
+    let compatibility = try installerCompatibility(from: manifest.installer)
 
     var seenDeviceIdentifiers = Set<String>()
     var records = [String: PinnedInstallerRecord]()
@@ -244,7 +284,42 @@ struct SignedSupportCatalogVerifier: Sendable {
       )
     }
 
-    return SupportCatalog(sequence: manifest.sequence, records: records)
+    return SupportCatalog(
+      sequence: manifest.sequence,
+      records: records,
+      installerCompatibility: compatibility
+    )
+  }
+
+  private func installerCompatibility(
+    from record: InstallerCompatibilityRecord?
+  ) throws -> InstallerCompatibility? {
+    guard let record else {
+      return nil
+    }
+    guard let minimum = InstallerVersion(record.minimumVersion) else {
+      throw SupportCatalogError.invalidField("installer.minimumVersion")
+    }
+    guard let latest = InstallerVersion(record.latestVersion) else {
+      throw SupportCatalogError.invalidField("installer.latestVersion")
+    }
+    guard minimum <= latest else {
+      throw SupportCatalogError.invalidField("installer.minimumVersion")
+    }
+    let url = record.downloadURL
+    guard url.scheme == "https",
+      url.host?.isEmpty == false,
+      url.user == nil,
+      url.password == nil,
+      url.fragment == nil
+    else {
+      throw SupportCatalogError.invalidField("installer.downloadURL")
+    }
+    return InstallerCompatibility(
+      minimumVersion: minimum,
+      latestVersion: latest,
+      downloadURL: url
+    )
   }
 
   private func installerDelivery(
@@ -377,8 +452,15 @@ private struct Manifest: Decodable {
   let schemaVersion: Int
   let sequence: UInt64
   let issuedAt: Date
-  let expiresAt: Date
+  let expiresAt: Date?
+  let installer: InstallerCompatibilityRecord?
   let models: [ModelRecord]
+}
+
+private struct InstallerCompatibilityRecord: Decodable {
+  let minimumVersion: String
+  let latestVersion: String
+  let downloadURL: URL
 }
 
 private struct ModelRecord: Decodable {

@@ -5,6 +5,14 @@
     case unavailable
   }
 
+  /// Locates the engine bundled inside the app.
+  ///
+  /// This copy exists only to inspect the Mac before anything is downloaded,
+  /// which is what lets the app refuse a Mac that already runs Omarchy without
+  /// touching the network. The engine that plans and performs an install comes
+  /// from the signed catalog instead, so the two versions are deliberately
+  /// allowed to differ: an engine fix ships in a catalog without rebuilding
+  /// and re-notarizing the app. Nothing may require them to be equal.
   public struct ValidationEngineArtifactLocator: Sendable {
     public static let version = "v0.9.0-omarchy.14"
     public static let fileName = "installer-v0.9.0-omarchy.14.tar.gz"

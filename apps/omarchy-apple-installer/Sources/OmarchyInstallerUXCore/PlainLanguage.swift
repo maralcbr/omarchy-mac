@@ -76,7 +76,8 @@
       "Live progress is unavailable. The installation continues; the sealed journal is still verified when it finishes."
     public static let installVerifyingOwner = "Verifying machine owner…"
     public static let installStageLabels = [
-      "Prepare space", "Boot files", "Recovery handoff",
+      "Preparing the space", "Installing the boot files",
+      "Handing off to Recovery",
     ]
 
     public static func installPhaseTitle(forPhase phase: String?) -> String {
@@ -167,6 +168,11 @@
 
     public static let doneHeadline = "Omarchy is installed"
     public static let startOver = "Start over"
+    public static let downloadInstaller = "Download the installer"
+    public static let rcBadge = "BETA"
+    public static let channelMenuTitle = "Release Channel"
+    public static let channelStable = "Stable"
+    public static let channelRC = "RC"
     public static let doneVerifiedRows = [
       PlanFactRow(label: "Boot chain", value: "m1n1 → U-Boot → GRUB → Omarchy"),
       PlanFactRow(
@@ -368,6 +374,45 @@
         }
       }
 
+      if let preparation = error as? InstallerAssetPreparationError {
+        switch preparation {
+        case .installerOutdated(let current, let minimum, let downloadURL):
+          return FailureDisplay(
+            headline: "This installer is out of date",
+            plainDetail:
+              "Nothing was downloaded. Omarchy now needs installer \(minimum) or newer, and this one is \(current).",
+            technicalDetail: technical,
+            remedy:
+              "Download the current installer, run it, then open the app again.",
+            actionURL: downloadURL,
+            actionTitle: downloadInstaller
+          )
+        case .hostBlocked(let reason):
+          return FailureDisplay(
+            headline: "This Mac is not supported yet",
+            plainDetail: reason,
+            technicalDetail: technical,
+            isBlockedModel: true
+          )
+        case .unsupportedDevice(let identifier):
+          return FailureDisplay(
+            headline: "This Mac is not in the signed catalog",
+            plainDetail:
+              "Nothing was downloaded. The signed catalog does not list \(identifier).",
+            technicalDetail: technical,
+            isBlockedModel: true
+          )
+        case .deliveryMetadataUnavailable:
+          return FailureDisplay(
+            headline: "The signed catalog is incomplete",
+            plainDetail:
+              "It names this Mac but not the files to install, so nothing was downloaded.",
+            technicalDetail: technical,
+            remedy: "Check again later."
+          )
+        }
+      }
+
       if let staging = error as? ArtifactStageError {
         switch staging {
         case .digestMismatch, .sizeMismatch, .destinationConflict,
@@ -389,14 +434,47 @@
         }
       }
 
-      if let configuration = error as? InstallerReleaseConfigurationError,
-        configuration == .releaseResourcesUnavailable
-      {
-        return FailureDisplay(
-          headline: "This build cannot install anything",
-          plainDetail: releaseResourcesUnavailable,
-          technicalDetail: technical
-        )
+      if let configuration = error as? InstallerReleaseConfigurationError {
+        switch configuration {
+        case .releaseResourcesUnavailable:
+          return FailureDisplay(
+            headline: "This build cannot install anything",
+            plainDetail: releaseResourcesUnavailable,
+            technicalDetail: technical
+          )
+        case .unexpectedHTTPStatus(404):
+          return FailureDisplay(
+            headline: "No Omarchy release was found",
+            plainDetail:
+              "This release channel has nothing published yet, so there was nothing to download.",
+            technicalDetail: technical,
+            remedy:
+              "Try another channel under Release Channel in the menu bar, or check again later."
+          )
+        case .unexpectedHTTPStatus:
+          return FailureDisplay(
+            headline: "The release server did not answer properly",
+            plainDetail: "Nothing was downloaded and nothing was changed.",
+            technicalDetail: technical,
+            remedy: "Check your network connection and try again."
+          )
+        case .invalidCatalogEnvelope, .invalidCatalogSignature,
+          .oversizedDocument:
+          return FailureDisplay(
+            headline: "The published release could not be read",
+            plainDetail:
+              "What the server returned was not a valid signed release, so nothing was downloaded.",
+            technicalDetail: technical,
+            remedy: "Check again later."
+          )
+        default:
+          return FailureDisplay(
+            headline: "The release could not be reached",
+            plainDetail: "Nothing was downloaded and nothing was changed.",
+            technicalDetail: technical,
+            remedy: "Check your network connection and try again."
+          )
+        }
       }
 
       if let catalog = error as? SupportCatalogError {

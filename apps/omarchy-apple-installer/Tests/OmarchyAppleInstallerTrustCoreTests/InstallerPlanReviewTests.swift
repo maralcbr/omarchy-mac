@@ -241,12 +241,15 @@
         catalogDocuments: documents
       )
       let configuration = InstallerReleaseConfiguration(
-        catalogURL: URL(
-          string: "https://releases.example.com/catalog.json"
-        )!,
-        catalogSignatureURL: URL(
-          string: "https://releases.example.com/catalog.json.sig"
-        )!,
+        channels: ReleaseChannelEndpoints(
+          stable: URL(
+            string: "https://releases.example.com/channels/stable/catalog.signed.json"
+          )!,
+          rc: URL(
+            string: "https://releases.example.com/channels/rc/catalog.signed.json"
+          )!
+        ),
+        defaultChannel: .stable,
         trustRoot: trustRoot,
         helperMachServiceName: "com.omarchy.apple-installer.helper",
         helperCodeSigningRequirement:

@@ -265,6 +265,10 @@
     public let retryRecoveryAvailable: Bool
     public let isBlockedModel: Bool
     public let device: HostDisplay?
+    /// A page the person should open to get themselves unstuck, when one
+    /// exists — today only the current installer download.
+    public let actionURL: URL?
+    public let actionTitle: String?
 
     public init(
       headline: String,
@@ -273,7 +277,9 @@
       remedy: String? = nil,
       retryRecoveryAvailable: Bool = false,
       isBlockedModel: Bool = false,
-      device: HostDisplay? = nil
+      device: HostDisplay? = nil,
+      actionURL: URL? = nil,
+      actionTitle: String? = nil
     ) {
       self.headline = headline
       self.plainDetail = plainDetail
@@ -282,6 +288,8 @@
       self.retryRecoveryAvailable = retryRecoveryAvailable
       self.isBlockedModel = isBlockedModel
       self.device = device
+      self.actionURL = actionURL
+      self.actionTitle = actionTitle
     }
   }
 

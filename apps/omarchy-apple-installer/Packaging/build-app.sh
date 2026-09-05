@@ -107,8 +107,24 @@ descriptor_schema="$(plutil -extract schema_version raw -o - "$release_descripto
 descriptor_service="$(plutil -extract helper_mach_service_name raw -o - "$release_descriptor")"
 descriptor_requirement="$(plutil -extract helper_code_signing_requirement raw -o - "$release_descriptor")"
 descriptor_fingerprint="$(plutil -extract trust_root_fingerprint raw -o - "$release_descriptor")"
-if [[ $descriptor_schema != "1" ]]; then
-  fail "release.json schema_version must be 1"
+if [[ $descriptor_schema != "2" ]]; then
+  fail "release.json schema_version must be 2"
+fi
+descriptor_default_channel="$(plutil -extract default_channel raw -o - "$release_descriptor")"
+if [[ $descriptor_default_channel != "stable" && $descriptor_default_channel != "rc" ]]; then
+  fail "release.json default_channel must be stable or rc"
+fi
+descriptor_stable_url="$(plutil -extract channels.stable.catalog_url raw -o - "$release_descriptor")"
+descriptor_rc_url="$(plutil -extract channels.rc.catalog_url raw -o - "$release_descriptor")"
+for descriptor_url in "$descriptor_stable_url" "$descriptor_rc_url"; do
+  if [[ $descriptor_url != https://?*/?* ]]; then
+    fail "release.json channel URLs must be https with a host and a path"
+  fi
+done
+# Both channels pointing at one object would silently erase the separation
+# between what testers see and what everyone else installs.
+if [[ $descriptor_stable_url == "$descriptor_rc_url" ]]; then
+  fail "release.json stable and rc channels must not share a URL"
 fi
 if [[ $descriptor_service != "$helper_identifier" ]]; then
   fail "release.json helper service does not match the compiled product"

@@ -145,6 +145,7 @@ grep -Fxq 'https://api.github.test/repos/example/releases?per_page=100' "$test_t
   fail "versioned channel discovery reads the GitHub releases API"
 grep -Fxq 'https://github.com/maralcbr/omarchy-pkgs/releases/download/asahi-quattro-channel-22/asahi-quattro-channel' "$test_tmp/discovery-curl.log" ||
   fail "versioned channel discovery downloads the selected signed pointer"
+grep -Fq '&page=$page' "$updater" || fail "bundle updater pages through the release listing"
 pass "immutable versioned Asahi channels are discovered dynamically"
 
 write_channel 2 "$source_commit"

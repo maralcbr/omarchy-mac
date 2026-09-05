@@ -65,6 +65,7 @@
         InstallerReleasePreparationRequest(
           host: fixture.host,
           configuration: fixture.releaseConfiguration,
+          channel: .stable,
           validationTime: now,
           stagingDirectory: directory
         )
@@ -75,8 +76,118 @@
       XCTAssertEqual(try Data(contentsOf: result.payload.fileURL), fixture.payload)
       let releaseDownloadCount = await fixture.releaseDownloader.downloadCount
       let artifactDownloadCount = await fixture.downloader.downloadCount
-      XCTAssertEqual(releaseDownloadCount, 2)
+      // The catalog and its signature arrive as one envelope object, so a
+      // channel update can never be read half-applied.
+      XCTAssertEqual(releaseDownloadCount, 1)
       XCTAssertEqual(artifactDownloadCount, 3)
+    }
+
+    func testAnOutdatedInstallerIsRefusedBeforeAnythingIsDownloaded()
+      async throws
+    {
+      let fixture = try makeFixture(
+        schemaVersion: 2,
+        installerMinimumVersion: "2.0.0"
+      )
+      let directory = temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let coordinator = InstallerReleaseAssetCoordinator(
+        catalogFetcher: InstallerReleaseCatalogFetcher(
+          downloader: fixture.releaseDownloader
+        ),
+        assetPreparer: fixture.preparer
+      )
+
+      await assertAssetPreparationThrows(
+        try await coordinator.prepare(
+          InstallerReleasePreparationRequest(
+            host: fixture.host,
+            configuration: fixture.releaseConfiguration,
+            channel: .stable,
+            validationTime: now,
+            installerVersion: InstallerVersion("1.9.9"),
+            stagingDirectory: directory
+          )
+        )
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerAssetPreparationError,
+          .installerOutdated(
+            current: InstallerVersion("1.9.9")!,
+            minimum: InstallerVersion("2.0.0")!,
+            downloadURL: URL(
+              string:
+                "https://downloads.example.com/installer/stable/Installer.pkg"
+            )!
+          )
+        )
+      }
+
+      let artifactDownloadCount = await fixture.downloader.downloadCount
+      XCTAssertEqual(artifactDownloadCount, 0)
+    }
+
+    func testAnInstallerAtTheMinimumVersionProceeds() async throws {
+      let fixture = try makeFixture(
+        schemaVersion: 2,
+        installerMinimumVersion: "2.0.0"
+      )
+      let directory = temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let coordinator = InstallerReleaseAssetCoordinator(
+        catalogFetcher: InstallerReleaseCatalogFetcher(
+          downloader: fixture.releaseDownloader
+        ),
+        assetPreparer: fixture.preparer
+      )
+
+      let result = try await coordinator.prepare(
+        InstallerReleasePreparationRequest(
+          host: fixture.host,
+          configuration: fixture.releaseConfiguration,
+          channel: .stable,
+          validationTime: now,
+          installerVersion: InstallerVersion("2.0.0"),
+          stagingDirectory: directory
+        )
+      )
+
+      XCTAssertEqual(
+        result.installerCompatibility?.minimumVersion,
+        InstallerVersion("2.0.0")
+      )
+    }
+
+    func testAnUnknownInstallerVersionSkipsTheCompatibilityCheck()
+      async throws
+    {
+      // A bare SwiftPM build has no bundle version. That must never be
+      // mistaken for an out-of-date installer.
+      let fixture = try makeFixture(
+        schemaVersion: 2,
+        installerMinimumVersion: "9.0.0"
+      )
+      let directory = temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let coordinator = InstallerReleaseAssetCoordinator(
+        catalogFetcher: InstallerReleaseCatalogFetcher(
+          downloader: fixture.releaseDownloader
+        ),
+        assetPreparer: fixture.preparer
+      )
+
+      let result = try await coordinator.prepare(
+        InstallerReleasePreparationRequest(
+          host: fixture.host,
+          configuration: fixture.releaseConfiguration,
+          channel: .stable,
+          validationTime: now,
+          installerVersion: nil,
+          stagingDirectory: directory
+        )
+      )
+
+      XCTAssertEqual(result.catalogIdentity.sequence, 30)
     }
 
     func testReleaseCoordinatorBlocksM4BeforeCatalogNetwork() async throws {
@@ -101,6 +212,7 @@
           InstallerReleasePreparationRequest(
             host: fixture.host,
             configuration: fixture.releaseConfiguration,
+            channel: .stable,
             validationTime: now,
             stagingDirectory: directory
           )
@@ -234,7 +346,8 @@
       schemaVersion: Int,
       host: AppleSiliconHostInspection? = nil,
       invalidateSignature: Bool = false,
-      omitEngineVersion: Bool = false
+      omitEngineVersion: Bool = false,
+      installerMinimumVersion: String? = nil
     ) throws -> AssetPreparationFixture {
       let engine = Data("engine archive".utf8)
       let metadata = Data("installer metadata".utf8)
@@ -256,6 +369,7 @@
         metadata: metadata,
         payload: payload,
         repairManifest: repairManifest,
+        installerMinimumVersion: installerMinimumVersion,
         omitEngineVersion: omitEngineVersion
       )
       let signature = try privateKey.signature(for: payloadData)
@@ -268,19 +382,24 @@
         rawRepresentation: publicKey,
         expectedFingerprint: digest(publicKey)
       )
-      let catalogURL = URL(
-        string: "https://releases.example.com/apple/catalog.json"
+      let stableURL = URL(
+        string: "https://releases.example.com/channels/stable/catalog.signed.json"
       )!
-      let signatureURL = URL(
-        string: "https://releases.example.com/apple/catalog.json.sig"
+      let rcURL = URL(
+        string: "https://releases.example.com/channels/rc/catalog.signed.json"
       )!
+      let envelope = Data(
+        """
+        {"schema_version":1,"catalog":"\(payloadData.base64EncodedString())","signature":"\(deliveredSignature.base64EncodedString())"}
+        """.utf8
+      )
       let releaseDownloader = ReleaseCatalogFixtureDownloader(values: [
-        catalogURL: payloadData,
-        signatureURL: deliveredSignature,
+        stableURL: envelope,
+        rcURL: envelope,
       ])
       let releaseConfiguration = InstallerReleaseConfiguration(
-        catalogURL: catalogURL,
-        catalogSignatureURL: signatureURL,
+        channels: ReleaseChannelEndpoints(stable: stableURL, rc: rcURL),
+        defaultChannel: .stable,
         trustRoot: trustRoot,
         helperMachServiceName: "com.omarchy.apple-installer.helper",
         helperCodeSigningRequirement:
@@ -316,6 +435,7 @@
       metadata: Data,
       payload: Data,
       repairManifest: Data,
+      installerMinimumVersion: String? = nil,
       omitEngineVersion: Bool
     ) -> Data {
       let issued = ISO8601DateFormatter().string(
@@ -338,9 +458,13 @@
         \(engineVersion),"engineArtifact":{"sourceURL":"https://downloads.example.com/engine.tar.gz","fileName":"engine.tar.gz","sizeBytes":\(engine.count)},"metadataArtifact":{"sourceURL":"https://downloads.example.com/installer-data.json","fileName":"installer-data.json","sizeBytes":\(metadata.count)},"payloadArtifact":{"sourceURL":"https://downloads.example.com/omarchy.img.zst","fileName":"omarchy.img.zst","sizeBytes":\(payload.count)}\(repairDelivery)
         """
         : ""
+      let installer =
+        installerMinimumVersion.map {
+          ",\"installer\":{\"minimumVersion\":\"\($0)\",\"latestVersion\":\"9.9.9\",\"downloadURL\":\"https://downloads.example.com/installer/stable/Installer.pkg\"}"
+        } ?? ""
       return Data(
         """
-        {"schemaVersion":\(schemaVersion),"sequence":30,"issuedAt":"\(issued)","expiresAt":"\(expires)","models":[{"deviceIdentifier":"apple,j314s","status":"enabled","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"\(digest(engine))","metadataDigest":"\(digest(metadata))","payloadDigest":"\(digest(payload))","evidenceRevision":"evidence-s4"\(delivery)}]}
+        {"schemaVersion":\(schemaVersion),"sequence":30,"issuedAt":"\(issued)","expiresAt":"\(expires)"\(installer),"models":[{"deviceIdentifier":"apple,j314s","status":"enabled","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"\(digest(engine))","metadataDigest":"\(digest(metadata))","payloadDigest":"\(digest(payload))","evidenceRevision":"evidence-s4"\(delivery)}]}
         """.utf8
       )
     }

@@ -100,16 +100,27 @@ if [[ -n ${OMARCHY_ASAHI_CHANNEL_URL:-} ]]; then
   channel_signature_url="${OMARCHY_ASAHI_CHANNEL_SIGNATURE_URL:-$channel_url.sig}"
 else
   releases_api_url="${OMARCHY_ASAHI_RELEASES_API_URL:-https://api.github.com/repos/$repo/releases?per_page=100}"
-  download "$releases_api_url" "$workdir/releases.json"
-  tag=$(jq -er '
-    [
-      .[]
-      | select(.draft == false and .prerelease == false)
-      | select(.tag_name | test("^asahi-quattro-channel-[1-9][0-9]*$"))
-      | { tag: .tag_name, sequence: (.tag_name | sub("^asahi-quattro-channel-"; "") | tonumber) }
-    ]
-    | max_by(.sequence).tag
-  ' "$workdir/releases.json") || fail "could not discover the signed Apple Silicon release channel"
+  # Releases come back newest first, so the highest channel is on the first page
+  # that holds any channel release. Keep paging only while a page is full and
+  # held none, since package and snapshot tags crowd the listing over time.
+  tag=""
+  for page in 1 2 3 4 5; do
+    page_url=$releases_api_url
+    (( page > 1 )) && page_url="$releases_api_url&page=$page"
+    download "$page_url" "$workdir/releases.json"
+    tag=$(jq -er '
+      [
+        .[]
+        | select(.draft == false and .prerelease == false)
+        | select(.tag_name | test("^asahi-quattro-channel-[1-9][0-9]*$"))
+        | { tag: .tag_name, sequence: (.tag_name | sub("^asahi-quattro-channel-"; "") | tonumber) }
+      ]
+      | max_by(.sequence).tag
+    ' "$workdir/releases.json" 2>/dev/null) && [[ -n $tag ]] && break
+    tag=""
+    (( $(jq -r 'length' "$workdir/releases.json" 2>/dev/null || echo 0) == 100 )) || break
+  done
+  [[ -n $tag ]] || fail "could not discover the signed Apple Silicon release channel"
   base="https://github.com/$repo/releases/download/$tag"
   channel_url="$base/asahi-quattro-channel"
   channel_signature_url="$channel_url.sig"

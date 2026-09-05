@@ -15,30 +15,59 @@
     case invalidCatalogSignature
     case releaseResourcesUnavailable
     case unsafeReleaseResource(String)
+    case invalidCatalogEnvelope
+  }
+
+  /// The release channels a build can read. Every build names both, so the
+  /// rc channel can be opened later without shipping a new signed app.
+  public enum ReleaseChannel: String, CaseIterable, Codable, Sendable {
+    case stable
+    case rc
+  }
+
+  public struct ReleaseChannelEndpoints: Equatable, Sendable {
+    public let stable: URL
+    public let rc: URL
+
+    public init(stable: URL, rc: URL) {
+      self.stable = stable
+      self.rc = rc
+    }
+
+    public func catalogURL(for channel: ReleaseChannel) -> URL {
+      switch channel {
+      case .stable: stable
+      case .rc: rc
+      }
+    }
   }
 
   public struct InstallerReleaseConfiguration: Sendable {
-    public let catalogURL: URL
-    public let catalogSignatureURL: URL
+    public let channels: ReleaseChannelEndpoints
+    public let defaultChannel: ReleaseChannel
     public let trustRoot: AppOwnedTrustRoot
     public let helperMachServiceName: String
     public let helperCodeSigningRequirement: String
     public let sealedCatalogDocuments: InstallerReleaseCatalogDocuments?
 
     public init(
-      catalogURL: URL,
-      catalogSignatureURL: URL,
+      channels: ReleaseChannelEndpoints,
+      defaultChannel: ReleaseChannel,
       trustRoot: AppOwnedTrustRoot,
       helperMachServiceName: String,
       helperCodeSigningRequirement: String,
       sealedCatalogDocuments: InstallerReleaseCatalogDocuments? = nil
     ) {
-      self.catalogURL = catalogURL
-      self.catalogSignatureURL = catalogSignatureURL
+      self.channels = channels
+      self.defaultChannel = defaultChannel
       self.trustRoot = trustRoot
       self.helperMachServiceName = helperMachServiceName
       self.helperCodeSigningRequirement = helperCodeSigningRequirement
       self.sealedCatalogDocuments = sealedCatalogDocuments
+    }
+
+    public func catalogURL(for channel: ReleaseChannel) -> URL {
+      channels.catalogURL(for: channel)
     }
   }
 
@@ -70,15 +99,35 @@
       } catch {
         throw InstallerReleaseConfigurationError.invalidDescriptor
       }
-      guard decoded.schemaVersion == 1 else {
+      guard decoded.schemaVersion == 2 else {
         throw InstallerReleaseConfigurationError.unsupportedSchema(
           decoded.schemaVersion
         )
       }
-      try validateURL(decoded.catalogURL, field: "catalog_url")
-      try validateURL(
-        decoded.catalogSignatureURL,
-        field: "catalog_signature_url"
+      try validateChannelObjects(in: dictionary)
+      guard let defaultChannel = ReleaseChannel(rawValue: decoded.defaultChannel)
+      else {
+        throw InstallerReleaseConfigurationError.invalidDescriptor
+      }
+      var endpoints = [ReleaseChannel: URL]()
+      for channel in ReleaseChannel.allCases {
+        guard let descriptor = decoded.channels[channel.rawValue] else {
+          throw InstallerReleaseConfigurationError.invalidDescriptor
+        }
+        try validateURL(
+          descriptor.catalogURL,
+          field: "channels.\(channel.rawValue).catalog_url"
+        )
+        endpoints[channel] = descriptor.catalogURL
+      }
+      // Two channels pointing at one object would silently defeat the
+      // separation between what testers see and what users get.
+      guard endpoints[.stable] != endpoints[.rc] else {
+        throw InstallerReleaseConfigurationError.invalidURL("channels")
+      }
+      let channels = ReleaseChannelEndpoints(
+        stable: endpoints[.stable]!,
+        rc: endpoints[.rc]!
       )
 
       let trustRoot: AppOwnedTrustRoot
@@ -104,13 +153,31 @@
       }
 
       return InstallerReleaseConfiguration(
-        catalogURL: decoded.catalogURL,
-        catalogSignatureURL: decoded.catalogSignatureURL,
+        channels: channels,
+        defaultChannel: defaultChannel,
         trustRoot: trustRoot,
         helperMachServiceName: decoded.helperMachServiceName,
         helperCodeSigningRequirement: decoded.helperCodeSigningRequirement,
         sealedCatalogDocuments: nil
       )
+    }
+
+    /// The decoder tolerates extra keys, so the channel objects are key-set
+    /// checked here the same way the top level is.
+    private func validateChannelObjects(in dictionary: [String: Any]) throws {
+      guard let channels = dictionary["channels"] as? [String: Any],
+        Set(channels.keys) == Set(ReleaseChannel.allCases.map(\.rawValue))
+      else {
+        throw InstallerReleaseConfigurationError.invalidDescriptor
+      }
+      for value in channels.values {
+        guard let entry = value as? [String: Any],
+          Set(entry.keys)
+            == Set(ChannelDescriptor.CodingKeys.allCases.map(\.rawValue))
+        else {
+          throw InstallerReleaseConfigurationError.invalidDescriptor
+        }
+      }
     }
 
     private func validateURL(_ url: URL, field: String) throws {
@@ -169,8 +236,8 @@
         from: releaseDirectory
       )
       return InstallerReleaseConfiguration(
-        catalogURL: configuration.catalogURL,
-        catalogSignatureURL: configuration.catalogSignatureURL,
+        channels: configuration.channels,
+        defaultChannel: configuration.defaultChannel,
         trustRoot: configuration.trustRoot,
         helperMachServiceName: configuration.helperMachServiceName,
         helperCodeSigningRequirement:
@@ -294,6 +361,8 @@
   public struct InstallerReleaseCatalogFetcher: Sendable {
     public static let maximumCatalogBytes = 1_048_576
     public static let signatureBytes = 64
+    /// Base64 of a 1 MiB catalog plus the envelope's own framing.
+    public static let maximumEnvelopeBytes = 1_572_864
 
     private let downloader: any ReleaseDocumentDownloading
 
@@ -306,7 +375,8 @@
     }
 
     public func fetch(
-      configuration: InstallerReleaseConfiguration
+      configuration: InstallerReleaseConfiguration,
+      channel: ReleaseChannel
     ) async throws -> InstallerReleaseCatalogDocuments {
       if let sealed = configuration.sealedCatalogDocuments {
         guard !sealed.payload.isEmpty,
@@ -322,23 +392,48 @@
         return sealed
       }
 
-      async let payload = downloader.download(
-        from: configuration.catalogURL,
-        maximumBytes: Self.maximumCatalogBytes,
-        role: "catalog"
+      let envelope = try await downloader.download(
+        from: configuration.catalogURL(for: channel),
+        maximumBytes: Self.maximumEnvelopeBytes,
+        role: "catalog-envelope"
       )
-      async let signature = downloader.download(
-        from: configuration.catalogSignatureURL,
-        maximumBytes: Self.signatureBytes,
-        role: "catalog-signature"
-      )
-      let documents = try await (payload, signature)
-      guard documents.1.count == Self.signatureBytes else {
+      return try SignedCatalogEnvelope.decode(envelope)
+    }
+  }
+
+  /// The catalog and its signature travel as one object so a channel update is
+  /// a single atomic write: a reader can never see a new catalog beside the
+  /// signature of the previous one.
+  enum SignedCatalogEnvelope {
+    static let schemaVersion = 1
+
+    static func decode(
+      _ data: Data
+    ) throws -> InstallerReleaseCatalogDocuments {
+      guard let object = try? JSONSerialization.jsonObject(with: data),
+        let dictionary = object as? [String: Any],
+        Set(dictionary.keys) == ["schema_version", "catalog", "signature"],
+        let version = dictionary["schema_version"] as? Int,
+        version == schemaVersion,
+        let encodedCatalog = dictionary["catalog"] as? String,
+        let encodedSignature = dictionary["signature"] as? String,
+        let payload = Data(base64Encoded: encodedCatalog),
+        let signature = Data(base64Encoded: encodedSignature)
+      else {
+        throw InstallerReleaseConfigurationError.invalidCatalogEnvelope
+      }
+      guard !payload.isEmpty,
+        payload.count <= InstallerReleaseCatalogFetcher.maximumCatalogBytes
+      else {
+        throw InstallerReleaseConfigurationError.oversizedDocument("catalog")
+      }
+      guard signature.count == InstallerReleaseCatalogFetcher.signatureBytes
+      else {
         throw InstallerReleaseConfigurationError.invalidCatalogSignature
       }
       return InstallerReleaseCatalogDocuments(
-        payload: documents.0,
-        signature: documents.1
+        payload: payload,
+        signature: signature
       )
     }
   }
@@ -359,7 +454,10 @@
       maximumBytes: Int,
       role: String
     ) async throws -> Data {
-      let (bytes, response) = try await URLSession.shared.bytes(from: url)
+      var request = URLRequest(url: url)
+      request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+      request.timeoutInterval = 30
+      let (bytes, response) = try await URLSession.shared.bytes(for: request)
       guard let response = response as? HTTPURLResponse,
         (200...299).contains(response.statusCode)
       else {
@@ -400,19 +498,27 @@
 
   private struct ReleaseDescriptor: Decodable {
     let schemaVersion: Int
-    let catalogURL: URL
-    let catalogSignatureURL: URL
+    let defaultChannel: String
+    let channels: [String: ChannelDescriptor]
     let trustRootFingerprint: String
     let helperMachServiceName: String
     let helperCodeSigningRequirement: String
 
     enum CodingKeys: String, CodingKey, CaseIterable {
       case schemaVersion = "schema_version"
-      case catalogURL = "catalog_url"
-      case catalogSignatureURL = "catalog_signature_url"
+      case defaultChannel = "default_channel"
+      case channels
       case trustRootFingerprint = "trust_root_fingerprint"
       case helperMachServiceName = "helper_mach_service_name"
       case helperCodeSigningRequirement = "helper_code_signing_requirement"
+    }
+  }
+
+  private struct ChannelDescriptor: Decodable {
+    let catalogURL: URL
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+      case catalogURL = "catalog_url"
     }
   }
 #endif

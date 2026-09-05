@@ -58,7 +58,9 @@ file_digest() {
 }
 
 validate_tag() {
-  [[ $1 =~ ^v[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "invalid tag: $1"
+  # OS release tags carry an os- prefix so they never collide with the Linux
+  # lane's vX.Y.Z-mac.N tags or with the installer's own installer-vX.Y.Z line.
+  [[ $1 =~ ^(os-)?v[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "invalid tag: $1"
 }
 
 validate_repo() {
@@ -440,7 +442,7 @@ publish_r2_release() {
   local catalog_assets="" catalog_asset
   if [[ -n $catalog_dir ]]; then
     [[ -d $catalog_dir && ! -L $catalog_dir ]] || die "missing or unsafe catalog directory: $catalog_dir"
-    for catalog_asset in catalog.json catalog.json.sig release.json trust-root.ed25519.pub; do
+    for catalog_asset in catalog.json catalog.json.sig catalog.signed.json; do
       require_file "$catalog_dir/$catalog_asset"
       catalog_assets="$catalog_assets $catalog_asset"
     done
@@ -498,4 +500,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

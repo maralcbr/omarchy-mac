@@ -81,6 +81,9 @@
         ArtifactStageError.digestMismatch(expected: "a", actual: "b"),
         InstallerReleaseConfigurationError.releaseResourcesUnavailable,
         SupportCatalogError.expired,
+        InstallerAssetPreparationError.hostBlocked("not enabled"),
+        InstallerAssetPreparationError.unsupportedDevice("apple,j614s"),
+        InstallerAssetPreparationError.deliveryMetadataUnavailable,
         InstallerAppErrorStub.unknown,
       ]
 
@@ -93,6 +96,67 @@
         headlines.insert(failure.headline)
       }
       XCTAssertGreaterThanOrEqual(headlines.count, 8)
+    }
+
+    func testAnOutdatedInstallerOffersTheDownloadItNeeds() {
+      let url = URL(
+        string: "https://downloads.example.com/installer/stable/Installer.pkg"
+      )!
+      let failure = PlainLanguage.failure(
+        for: InstallerAssetPreparationError.installerOutdated(
+          current: InstallerVersion("1.9.9")!,
+          minimum: InstallerVersion("2.0.0")!,
+          downloadURL: url
+        )
+      )
+
+      XCTAssertEqual(failure.headline, "This installer is out of date")
+      XCTAssertTrue(failure.plainDetail.contains("2.0.0"))
+      XCTAssertTrue(failure.plainDetail.contains("1.9.9"))
+      XCTAssertTrue(failure.plainDetail.contains("Nothing was downloaded"))
+      XCTAssertEqual(failure.actionURL, url)
+      XCTAssertEqual(failure.actionTitle, PlainLanguage.downloadInstaller)
+      XCTAssertFalse(failure.retryRecoveryAvailable)
+    }
+
+    func testFailuresWithoutAnActionCarryNoLink() {
+      let failure = PlainLanguage.failure(for: SupportCatalogError.expired)
+
+      XCTAssertNil(failure.actionURL)
+      XCTAssertNil(failure.actionTitle)
+    }
+
+    func testAnEmptyChannelSaysSoInsteadOfShowingAStatusCode() {
+      let failure = PlainLanguage.failure(
+        for: InstallerReleaseConfigurationError.unexpectedHTTPStatus(404)
+      )
+
+      XCTAssertEqual(failure.headline, "No Omarchy release was found")
+      XCTAssertTrue(failure.plainDetail.contains("nothing published"))
+      XCTAssertFalse(failure.plainDetail.contains("404"))
+      XCTAssertFalse(failure.headline.contains("404"))
+      XCTAssertEqual(
+        failure.technicalDetail,
+        String(describing: InstallerReleaseConfigurationError.unexpectedHTTPStatus(404))
+      )
+      XCTAssertTrue(try XCTUnwrap(failure.remedy).contains("Release Channel"))
+    }
+
+    func testOtherServerFailuresAreDistinctFromAnEmptyChannel() {
+      let failure = PlainLanguage.failure(
+        for: InstallerReleaseConfigurationError.unexpectedHTTPStatus(503)
+      )
+
+      XCTAssertEqual(failure.headline, "The release server did not answer properly")
+      XCTAssertFalse(failure.plainDetail.contains("503"))
+    }
+
+    func testAnUnreadableReleaseIsExplainedPlainly() {
+      let failure = PlainLanguage.failure(
+        for: InstallerReleaseConfigurationError.invalidCatalogEnvelope
+      )
+
+      XCTAssertEqual(failure.headline, "The published release could not be read")
     }
 
     func testRetryEligibleFailureIsFlaggedAndExplained() {

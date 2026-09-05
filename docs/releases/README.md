@@ -16,6 +16,18 @@ The notes file must exist in the tagged commit. The publishing workflow reads
 it with `git show`, validates its title and required sections, and passes the
 immutable copy to `gh release create --notes-file`.
 
+The installer and the operating system are released on separate lines, so each
+has its own notes file:
+
+- `installer-vX.Y.Z.md` — the macOS installer app. Sections: what changed,
+  compatibility, validation.
+- `os-v<omarchy version>.<YYYYMMDD>.md` — an Omarchy package published to a
+  release channel. Same shape as the earlier `vX.Y.Z-mac.N.MMDDYY` notes.
+
+`v4.0.2-mac.1.19.090426` was the last release to carry both identities in one
+tag. See
+[`../apple-silicon-distribution-channels.md`](../apple-silicon-distribution-channels.md).
+
 Product releases and package-channel releases are separate immutable records:
 
 - `maralcbr/omarchy-mx-mac` tags identify the product source and publish the

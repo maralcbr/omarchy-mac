@@ -8,6 +8,7 @@
     public let trustRoot: AppOwnedTrustRoot
     public let validationTime: Date
     public let previouslyAcceptedCatalog: AcceptedCatalogIdentity?
+    public let installerVersion: InstallerVersion?
     public let stagingDirectory: URL
 
     public init(
@@ -17,6 +18,7 @@
       trustRoot: AppOwnedTrustRoot,
       validationTime: Date,
       previouslyAcceptedCatalog: AcceptedCatalogIdentity? = nil,
+      installerVersion: InstallerVersion? = nil,
       stagingDirectory: URL
     ) {
       self.host = host
@@ -25,6 +27,7 @@
       self.trustRoot = trustRoot
       self.validationTime = validationTime
       self.previouslyAcceptedCatalog = previouslyAcceptedCatalog
+      self.installerVersion = installerVersion
       self.stagingDirectory = stagingDirectory
     }
   }
@@ -36,6 +39,7 @@
     public let metadata: StagedInstallerArtifact
     public let payload: StagedInstallerArtifact
     public let repairManifest: StagedInstallerArtifact?
+    public let installerCompatibility: InstallerCompatibility?
 
     public init(
       catalogIdentity: AcceptedCatalogIdentity,
@@ -43,7 +47,8 @@
       engine: StagedInstallerArtifact,
       metadata: StagedInstallerArtifact,
       payload: StagedInstallerArtifact,
-      repairManifest: StagedInstallerArtifact? = nil
+      repairManifest: StagedInstallerArtifact? = nil,
+      installerCompatibility: InstallerCompatibility? = nil
     ) {
       self.catalogIdentity = catalogIdentity
       self.installer = installer
@@ -51,6 +56,7 @@
       self.metadata = metadata
       self.payload = payload
       self.repairManifest = repairManifest
+      self.installerCompatibility = installerCompatibility
     }
   }
 
@@ -58,6 +64,11 @@
     case hostBlocked(String)
     case unsupportedDevice(String)
     case deliveryMetadataUnavailable
+    case installerOutdated(
+      current: InstallerVersion,
+      minimum: InstallerVersion,
+      downloadURL: URL
+    )
   }
 
   public struct InstallerAssetPreparer: Sendable {
@@ -89,6 +100,16 @@
         now: request.validationTime,
         previouslyAccepted: request.previouslyAcceptedCatalog
       )
+      if let compatibility = catalog.installerCompatibility,
+        let current = request.installerVersion,
+        !compatibility.accepts(current)
+      {
+        throw InstallerAssetPreparationError.installerOutdated(
+          current: current,
+          minimum: compatibility.minimumVersion,
+          downloadURL: compatibility.downloadURL
+        )
+      }
       guard
         case .admitted(let installer) = catalog.admission(
           for: deviceIdentifier
@@ -127,7 +148,8 @@
         engine: try await engine,
         metadata: try await metadata,
         payload: try await payload,
-        repairManifest: try await repairManifest
+        repairManifest: try await repairManifest,
+        installerCompatibility: catalog.installerCompatibility
       )
     }
 

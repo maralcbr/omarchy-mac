@@ -13,13 +13,21 @@ struct OnePageInstallerView: View {
   @State private var session: InstallerSession
   @State private var showsShutdownConfirmation = false
   @State private var showsRecoveryRetryConfirmation = false
-  /// The last host and plan seen, so the header and the disk split stay on
-  /// the page through the phases that no longer carry them.
+  /// The last host seen, so the header stays on the page through the phases
+  /// that no longer carry it.
   @State private var host: HostDisplay?
-  @State private var plan: PlanDisplay?
+  /// Which channel this Mac reads. Owned by the scene so the banner always
+  /// names the channel the next preparation will actually fetch.
+  let channel: ReleaseChannel
 
-  init(environment: any InstallerEnvironment) {
+  init(
+    environment: any InstallerEnvironment,
+    channel: ReleaseChannel = ReleaseChannelPreference().resolve(
+      descriptorDefault: .stable
+    )
+  ) {
     _session = State(initialValue: InstallerSession(environment: environment))
+    self.channel = channel
   }
 
   var body: some View {
@@ -62,6 +70,11 @@ struct OnePageInstallerView: View {
     .focusEffectDisabled()
     .task {
       await session.inspect()
+    }
+    .onChange(of: channel) { _, _ in
+      // Switching channel discards anything already planned: the new channel
+      // may name a different release entirely.
+      Task { await session.inspect() }
     }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active {
@@ -126,6 +139,9 @@ struct OnePageInstallerView: View {
           StatusBadge(text: PlainLanguage.blockedBadge, kind: .blocked)
         } else {
           StatusBadge(text: PlainLanguage.supportedBadge, kind: .ok)
+        }
+        if channel == .rc {
+          StatusBadge(text: PlainLanguage.rcBadge, kind: .ok)
         }
       }
       .lineLimit(1)
@@ -202,9 +218,6 @@ struct OnePageInstallerView: View {
       }
 
     case .installing(let progress):
-      if let plan {
-        DiskSplitPanel(plan: plan, editable: false, isBusy: false, onSizeChosen: { _ in })
-      }
       InstallPanel(progress: progress)
 
     case .awaitingRecovery(let handoff):
@@ -288,6 +301,10 @@ struct OnePageInstallerView: View {
         Button(PlainLanguage.retry) { showsRecoveryRetryConfirmation = true }
           .omarchyPrimaryButton()
           .disabled(!session.canRetryRecoveryAuthorization)
+          .keyboardShortcut(.defaultAction)
+      } else if let url = failure.actionURL, let title = failure.actionTitle {
+        Button(title) { NSWorkspace.shared.open(url) }
+          .omarchyPrimaryButton()
           .keyboardShortcut(.defaultAction)
       }
     }
@@ -436,9 +453,6 @@ struct OnePageInstallerView: View {
       host = failure.device
     case .inspecting:
       host = nil
-      plan = nil
-    case .planPrepared(let seen, _), .planReview(let seen, _), .awaitingInstall(let seen, _, _):
-      plan = seen
     default:
       break
     }

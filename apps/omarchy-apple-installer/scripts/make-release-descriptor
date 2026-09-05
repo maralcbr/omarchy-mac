@@ -1,0 +1,88 @@
+#!/bin/bash
+# Write the app's release descriptor from a trust-root public key.
+#
+# The descriptor names both channels and never changes between releases, so
+# this runs once per signing key rather than once per release.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  make-release-descriptor --public-key FILE --base-url URL --output FILE
+                          [--default-channel stable|rc] [--adhoc]
+
+Writes release.json (schema 2) naming the stable and rc channel catalogs
+under BASE_URL and pinning the SHA-256 fingerprint of the public key.
+
+The helper code-signing requirement must match the build that will consume the
+descriptor. The default is the production Developer ID requirement; --adhoc
+writes the identifier-only requirement an ad-hoc build uses, for local
+structural validation.
+USAGE
+  exit 64
+}
+
+die() {
+  echo "make-release-descriptor: $1" >&2
+  exit 1
+}
+
+public_key=""
+base_url=""
+output=""
+default_channel="stable"
+adhoc=0
+
+while (( $# > 0 )); do
+  case $1 in
+    --public-key) public_key=${2:-}; shift 2 ;;
+    --base-url) base_url=${2:-}; shift 2 ;;
+    --output) output=${2:-}; shift 2 ;;
+    --default-channel) default_channel=${2:-}; shift 2 ;;
+    --adhoc) adhoc=1; shift ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n $public_key && -n $base_url && -n $output ]] || usage
+[[ -f $public_key && ! -L $public_key ]] || die "missing or unsafe public key: $public_key"
+(( $(wc -c <"$public_key") == 32 )) || die "the trust root must be exactly 32 raw bytes"
+[[ $base_url == https://* ]] || die "--base-url must be https: $base_url"
+[[ $base_url != */ ]] || die "--base-url must not end with a slash: $base_url"
+[[ $default_channel == "stable" || $default_channel == "rc" ]] ||
+  die "--default-channel must be stable or rc"
+[[ ! -e $output ]] || die "refusing to overwrite $output"
+
+helper_identifier="com.omarchy.mx.installer.helper"
+team_id="${OMARCHY_TEAM_ID:-T2C384FJBD}"
+fingerprint="sha256:$(/usr/bin/shasum -a 256 "$public_key" | awk '{print $1}')"
+if (( adhoc )); then
+  requirement="identifier \"$helper_identifier\""
+else
+  requirement="anchor apple generic and identifier \"$helper_identifier\" and certificate leaf[subject.OU] = \"$team_id\""
+fi
+
+python3 - "$output" "$fingerprint" "$base_url" "$default_channel" \
+  "$helper_identifier" "$requirement" <<'PY'
+import json
+import sys
+
+output, fingerprint, base_url, default_channel, helper, requirement = sys.argv[1:7]
+descriptor = {
+    "schema_version": 2,
+    "default_channel": default_channel,
+    "channels": {
+        "stable": {"catalog_url": f"{base_url}/channels/stable/catalog.signed.json"},
+        "rc": {"catalog_url": f"{base_url}/channels/rc/catalog.signed.json"},
+    },
+    "trust_root_fingerprint": fingerprint,
+    "helper_mach_service_name": helper,
+    "helper_code_signing_requirement": requirement,
+}
+with open(output, "x", encoding="utf-8") as stream:
+    json.dump(descriptor, stream, indent=2)
+    stream.write("\n")
+PY
+
+echo "release_descriptor=$output"
+echo "trust_root_fingerprint=$fingerprint"

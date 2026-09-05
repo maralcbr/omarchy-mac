@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="How an Omarchy MX Mac release is built across omarchy-pkgs, omarchy-iso and the macOS installer, and how the three repos pin each other.">
+<title>Omarchy MX Mac — Build Architecture</title>
+<style>
+:root {
+  --bg: #edf0f4; --surface: #ffffff; --surface-muted: #f3f5f8;
+  --ink: #17191d; --muted: #626873; --line: #d8dde5;
+  --accent: #2b55ed; --accent-soft: #e8edff;
+  --success: #16794b; --success-soft: #e7f6ee;
+  --warning: #8a5a00; --warning-soft: #fff3d2;
+  --future: #6847c7; --future-soft: #f0ebff;
+  --shadow: 0 20px 55px rgb(18 25 38 / 11%);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1116; --surface: #181b21; --surface-muted: #20242c;
+    --ink: #f2f4f7; --muted: #aab1bb; --line: #343a45;
+    --accent: #8ca7ff; --accent-soft: #202c51;
+    --success: #66d19c; --success-soft: #15372a;
+    --warning: #f0c15d; --warning-soft: #3e3014;
+    --future: #b39cff; --future-soft: #2d2450;
+    --shadow: 0 20px 55px rgb(0 0 0 / 35%);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; max-width: 100%; overflow-x: hidden; background: var(--bg); color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { padding: clamp(16px, 2.4vw, 40px); }
+main { max-width: 1640px; margin: 0 auto; min-width: 0; }
+header { margin-bottom: 18px; }
+h1 { font-size: clamp(20px, 2.2vw, 30px); margin: 0 0 6px; letter-spacing: -0.015em; }
+.lede { margin: 0; color: var(--muted); font-size: 14px; max-width: 92ch; line-height: 1.5; }
+.crosslink { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.crosslink a { color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 16px 0 12px;
+  font-size: 12.5px; color: var(--muted); align-items: center; }
+.legend .swatch { display: inline-flex; align-items: center; gap: 7px; }
+.legend .chip { width: 17px; height: 17px; border-radius: 5px;
+  border: 2px solid var(--line); background: var(--surface); flex: none; }
+.legend .chip.merged { border-color: var(--success); background: var(--success-soft); }
+.legend .chip.pending { border-color: var(--future); background: var(--future-soft);
+  border-style: dashed; border-width: 2.5px; }
+.legend .chip.ext { border-color: var(--muted); background: transparent; border-style: dashed; }
+.legend .chip.gate { border-color: var(--warning); background: var(--warning-soft); }
+.legend .chip.accent { border-color: var(--accent); background: var(--accent-soft); }
+.legend .chip.seam { background: repeating-linear-gradient(90deg, var(--muted) 0 6px, transparent 6px 11px);
+  border: 0; height: 2px; border-radius: 0; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow); padding: 10px; overflow-x: auto; max-width: 100%; }
+svg { display: block; width: 100%; min-width: 1100px; height: auto; }
+.lane { fill: var(--surface-muted); stroke: var(--line); stroke-width: 1; }
+.lane-title { fill: var(--ink); font-size: 14px; font-weight: 650; }
+.lane-sub { fill: var(--muted); font-size: 11.5px; }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.6; opacity: 0.75; }
+.edge.dashed { stroke-dasharray: 6 5; }
+.arrowhead { fill: var(--muted); opacity: 0.85; }
+.edge-label { fill: var(--muted); font-size: 10.5px; text-anchor: middle;
+  paint-order: stroke; stroke: var(--surface-muted); stroke-width: 4px; stroke-linejoin: round; }
+.node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.6; }
+.node .n-title { fill: var(--ink); font-size: 12.5px; font-weight: 640; }
+.node .n-sub { fill: var(--muted); font-size: 11px; }
+.node { cursor: default; outline: none; }
+.node:hover rect, .node:focus rect { stroke-width: 2.6; }
+.node:focus rect { stroke: var(--accent); }
+.tone-accent rect { stroke: var(--accent); fill: var(--accent-soft); }
+.tone-merged rect { stroke: var(--success); fill: var(--success-soft); }
+.tone-pending rect { stroke: var(--future); fill: var(--future-soft); stroke-dasharray: 7 4; }
+.tone-warn rect { stroke: var(--warning); fill: var(--warning-soft); }
+.tone-ext rect { fill: transparent; stroke: var(--muted); stroke-dasharray: 5 4; }
+.kind-gate rect { stroke: var(--warning); fill: var(--warning-soft); }
+.panel { margin-top: 14px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px 16px; min-height: 104px; }
+.panel h2 { margin: 0 0 3px; font-size: 14.5px; }
+.panel .p-sub { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; }
+.panel ul { margin: 0; padding-left: 17px; }
+.panel li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere;
+  font-size: 12px; color: var(--ink); line-height: 1.65; word-break: break-all; }
+.panel .p-note { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.panel.idle h2 { color: var(--muted); font-weight: 500; }
+footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+@media (max-width: 700px) { .canvas { padding: 6px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Omarchy MX Mac — build architecture</h1>
+<p class="lede">Three repositories build one release. omarchy-pkgs produces signed aarch64 packages, omarchy-iso bakes them into a sealed OS payload, and omarchy-mx-mac wraps that payload in a notarized macOS installer published to Cloudflare R2. The dashed lines are the seams: the exact files where one repository pins another.</p>
+<p class="crosslink">Companion page: <a href="build-architecture-omacom-aarch64.html">omacom/omarchy and the aarch64 / Asahi overlay</a>.</p>
+</header>
+<div class="legend"><span class="swatch"><span class="chip"></span>pipeline step</span><span class="swatch"><span class="chip accent"></span>signed or sealed artefact</span><span class="swatch"><span class="chip gate"></span>gate — nothing passes without evidence</span><span class="swatch"><span class="chip ext"></span>external, pinned input</span><span class="swatch"><span class="chip seam"></span>cross-repo seam</span></div>
+<div class="canvas">
+<svg viewBox="0 0 1636 960" role="img" aria-label="Build architecture diagram" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+<rect class="lane" x="16" y="64" width="452" height="816" rx="14"/>
+<text class="lane-title" x="32" y="50">omarchy-pkgs — aarch64 package farm</text>
+<text class="lane-sub" x="32" y="86">GitHub Actions, ubuntu-24.04-arm runners</text>
+<rect class="lane" x="584" y="64" width="452" height="816" rx="14"/>
+<text class="lane-title" x="600" y="50">omarchy-iso — OS payload builder</text>
+<text class="lane-sub" x="600" y="86">pinned Docker toolchain, checkpointed stages</text>
+<rect class="lane" x="1152" y="64" width="468" height="816" rx="14"/>
+<text class="lane-title" x="1168" y="50">omarchy-mx-mac — installer and distribution</text>
+<text class="lane-sub" x="1168" y="86">Swift app, Apple signing, Cloudflare R2</text>
+<path class="edge" d="M 242.0 152.0 C 242.0 166.0 242.0 156.0 242.0 170.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 230.0 C 242.0 244.0 242.0 234.0 242.0 248.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 308.0 C 242.0 322.0 132.5 316.0 132.5 330.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 308.0 C 242.0 322.0 351.5 316.0 351.5 330.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 132.5 390.0 C 132.5 404.0 351.5 316.0 351.5 330.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 351.5 390.0 C 351.5 404.0 242.0 398.0 242.0 412.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 472.0 C 242.0 486.0 242.0 476.0 242.0 490.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 550.0 C 242.0 564.0 242.0 556.0 242.0 570.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 630.0 C 242.0 644.0 242.0 636.0 242.0 650.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 242.0 710.0 C 242.0 724.0 242.0 714.0 242.0 728.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 152.0 C 810.0 166.0 810.0 156.0 810.0 170.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 230.0 C 810.0 244.0 810.0 234.0 810.0 248.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 308.0 C 810.0 322.0 810.0 312.0 810.0 326.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 403.0 C 810.0 417.0 810.0 411.0 810.0 425.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 519.0 C 810.0 539.5 700.5 539.5 700.5 560.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 810.0 519.0 C 810.0 539.5 919.5 539.5 919.5 560.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 700.5 620.0 C 700.5 637.5 810.0 637.5 810.0 655.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 919.5 620.0 C 919.5 637.5 810.0 637.5 810.0 655.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 152.0 C 1386.0 166.0 1386.0 156.0 1386.0 170.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 230.0 C 1386.0 244.0 1386.0 234.0 1386.0 248.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 308.0 C 1386.0 322.0 1386.0 304.0 1386.0 318.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 378.0 C 1386.0 392.0 1386.0 374.0 1386.0 388.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 448.0 C 1386.0 462.0 1386.0 452.0 1386.0 466.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 526.0 C 1386.0 540.0 1386.0 530.0 1386.0 544.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 604.0 C 1386.0 618.0 1386.0 600.0 1386.0 614.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 674.0 C 1386.0 690.0 1386.0 690.0 1386.0 706.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1386.0 749.0 C 1386.0 763.0 1386.0 750.0 1386.0 764.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 454.0 680.0 C 518.8 680.0 533.2 364.5 598.0 364.5" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 1022.0 693.5 C 1086.8 693.5 1101.2 200.0 1166.0 200.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1022.0 693.5 C 1086.8 693.5 1101.2 574.0 1166.0 574.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 242.0 788.0 L 242.0 818.0 Q 242.0 830.0 254.0 830.0 L 1128.0 830.0 Q 1140.0 830.0 1140.0 818.0 L 1140.0 739.5 Q 1140.0 727.5 1152.0 727.5 L 1166.0 727.5" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 1386.0 824.0 L 1386.0 900.0 Q 1386.0 912.0 1374.0 912.0 L 492.0 912.0 Q 480.0 912.0 480.0 900.0 L 480.0 692.0 Q 480.0 680.0 468.0 680.0 L 454.0 680.0" marker-end="url(#arrow)"/>
+<g class="node tone-ext kind-box" tabindex="0" data-title="source of the desktop runtime" data-sub="omarchy-mx-mac bin/ config/ install/ migrations/ themes/" data-paths="[&quot;omarchy-pkgs/pkgbuilds/omarchy-source.conf&quot;, &quot;omarchy-mx-mac/  (bin, config, default, install, migrations, themes, version)&quot;]" data-note="The conf pins OMARCHY_SOURCE_REF and OMARCHY_SOURCE_COMMIT; the build-runtime job clones that exact commit and packages it as omarchy-dev / omarchy-settings-dev.">
+<title>source of the desktop runtime
+omarchy-pkgs/pkgbuilds/omarchy-source.conf
+omarchy-mx-mac/  (bin, config, default, install, migrations, themes, version)</title>
+<rect x="30.0" y="92" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="117.0">source of the desktop runtime</text>
+<text class="n-sub" x="44.0" y="134.0">omarchy-mx-mac bin/ config/ install/ migrations/ themes/</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="package recipes" data-sub="pkgbuilds/&lt;pkg&gt;/PKGBUILD + .omarchy/package.json" data-paths="[&quot;omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/PKGBUILD&quot;, &quot;omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/.omarchy/package.json&quot;, &quot;omarchy-pkgs/pkgbuilds/asahi-repository-packages&quot;]" data-note="package.json carries release_ring, skip_build, the AUR source/sync flags and defer_runtime_deps. asahi-repository-packages is the list the candidate descriptor covers.">
+<title>package recipes
+omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/PKGBUILD
+omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/.omarchy/package.json
+omarchy-pkgs/pkgbuilds/asahi-repository-packages</title>
+<rect x="30.0" y="170" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="195.0">package recipes</text>
+<text class="n-sub" x="44.0" y="212.0">pkgbuilds/&lt;pkg&gt;/PKGBUILD + .omarchy/package.json</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="release workflow" data-sub="signing-check → plan → build + build-runtime" data-paths="[&quot;omarchy-pkgs/.github/workflows/release-asahi-package-candidate.yml&quot;, &quot;omarchy-pkgs/.github/workflows/release-asahi-package-incremental.yml&quot;, &quot;omarchy-pkgs/bin/asahi-incremental-plan&quot;, &quot;omarchy-pkgs/bin/asahi-release-controller&quot;]" data-note="Dispatched by hand. The incremental variant is resumable and reuses packages that did not change since the predecessor candidate.">
+<title>release workflow
+omarchy-pkgs/.github/workflows/release-asahi-package-candidate.yml
+omarchy-pkgs/.github/workflows/release-asahi-package-incremental.yml
+omarchy-pkgs/bin/asahi-incremental-plan
+omarchy-pkgs/bin/asahi-release-controller</title>
+<rect x="30.0" y="248" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="273.0">release workflow</text>
+<text class="n-sub" x="44.0" y="290.0">signing-check → plan → build + build-runtime</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="builder image" data-sub="build/Dockerfile" data-paths="[&quot;omarchy-pkgs/build/Dockerfile&quot;, &quot;omarchy-pkgs/build/build.sh&quot;]" data-note="Tagged omarchy-pkg-builder:latest-aarch64-edge and cached between runs.">
+<title>builder image
+omarchy-pkgs/build/Dockerfile
+omarchy-pkgs/build/build.sh</title>
+<rect x="30.0" y="330" width="205.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="355.0">builder image</text>
+<text class="n-sub" x="44.0" y="372.0">build/Dockerfile</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/build --arch aarch64" data-sub="makepkg in the container" data-paths="[&quot;omarchy-pkgs/bin/build&quot;, &quot;omarchy-pkgs/build/build.sh&quot;, &quot;omarchy-pkgs/build-output/&lt;mirror&gt;/&lt;arch&gt;/&quot;]" data-note="Split outputs are discovered with makepkg --packagelist; packages that depend on other Omarchy packages are built with --nodeps and get their runtime deps deferred.">
+<title>bin/build --arch aarch64
+omarchy-pkgs/bin/build
+omarchy-pkgs/build/build.sh
+omarchy-pkgs/build-output/&lt;mirror&gt;/&lt;arch&gt;/</title>
+<rect x="249.0" y="330" width="205.0" height="60" rx="10"/>
+<text class="n-title" x="263.0" y="355.0">bin/build --arch aarch64</text>
+<text class="n-sub" x="263.0" y="372.0">makepkg in the container</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="every package signed" data-sub="GPG subkey CAB18E17… (bin/asahi-signing-subkey-validate)" data-paths="[&quot;omarchy-pkgs/bin/sign&quot;, &quot;omarchy-pkgs/bin/asahi-signing-subkey-validate&quot;, &quot;omarchy-pkgs/keys/asahi-repository-signing.asc&quot;]" data-note="The private key never leaves the protected GitHub environment, which is why the candidate is built in CI rather than on a laptop.">
+<title>every package signed
+omarchy-pkgs/bin/sign
+omarchy-pkgs/bin/asahi-signing-subkey-validate
+omarchy-pkgs/keys/asahi-repository-signing.asc</title>
+<rect x="30.0" y="412" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="437.0">every package signed</text>
+<text class="n-sub" x="44.0" y="454.0">GPG subkey CAB18E17… (bin/asahi-signing-subkey-validate)</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="CANDIDATE prerelease" data-sub="asahi-packages-candidate-&lt;source sha&gt;" data-paths="[&quot;omarchy-pkgs/bin/asahi-candidate-assemble&quot;, &quot;omarchy-pkgs/bin/asahi-package-candidate-descriptor&quot;, &quot;omarchy-pkgs/bin/asahi-verify-candidate&quot;]" data-note="Immutable GitHub prerelease: every .pkg.tar plus its .sig, a SHA256SUMS, and a signed CANDIDATE descriptor naming the exact package set.">
+<title>CANDIDATE prerelease
+omarchy-pkgs/bin/asahi-candidate-assemble
+omarchy-pkgs/bin/asahi-package-candidate-descriptor
+omarchy-pkgs/bin/asahi-verify-candidate</title>
+<rect x="30.0" y="490" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="515.0">CANDIDATE prerelease</text>
+<text class="n-sub" x="44.0" y="532.0">asahi-packages-candidate-&lt;source sha&gt;</text>
+</g>
+<g class="node tone-plain kind-gate" tabindex="0" data-title="VM acceptance gate" data-sub="mx-mac test/vm/asahi-fresh/run on the M1" data-paths="[&quot;omarchy-mx-mac/test/vm/asahi-fresh/run&quot;, &quot;OMARCHY_VM_CANDIDATE_TAG / _SHA256 / _FINGERPRINT / _PACKAGE_COUNT&quot;, &quot;omarchy-mx-mac/docs/releases/asahi-packages-candidate-&lt;sha&gt;-acceptance.txt&quot;]" data-note="A fresh aarch64 install in QEMU against the candidate. Its signed acceptance record is what promotion refuses to run without.">
+<title>VM acceptance gate
+omarchy-mx-mac/test/vm/asahi-fresh/run
+OMARCHY_VM_CANDIDATE_TAG / _SHA256 / _FINGERPRINT / _PACKAGE_COUNT
+omarchy-mx-mac/docs/releases/asahi-packages-candidate-&lt;sha&gt;-acceptance.txt</title>
+<rect x="30.0" y="570" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="595.0">VM acceptance gate</text>
+<text class="n-sub" x="44.0" y="612.0">mx-mac test/vm/asahi-fresh/run on the M1</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="STABLE release" data-sub="asahi-packages-stable-&lt;source sha&gt;" data-paths="[&quot;omarchy-pkgs/bin/promote-asahi-package-candidate --publish&quot;]" data-note="Promotion re-signs nothing — it republishes the accepted bytes under a stable tag, so &#x27;these exact packages were tested&#x27; stays provable.">
+<title>STABLE release
+omarchy-pkgs/bin/promote-asahi-package-candidate --publish</title>
+<rect x="30.0" y="650" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="675.0">STABLE release</text>
+<text class="n-sub" x="44.0" y="692.0">asahi-packages-stable-&lt;source sha&gt;</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="asahi-quattro channel pointer" data-sub="asahi-quattro-channel-&lt;N&gt;, resolved by max N" data-paths="[&quot;omarchy-pkgs/bin/release-asahi-quattro&quot;, &quot;omarchy-pkgs/bin/install-asahi-quattro&quot;, &quot;omarchy-pkgs/.github/workflows/promote-asahi-quattro-runtime.yml&quot;]" data-note="A small signed bundle plus a monotonic pointer release. Consumers list the numbered tags and take the highest; rollbacks are refused.">
+<title>asahi-quattro channel pointer
+omarchy-pkgs/bin/release-asahi-quattro
+omarchy-pkgs/bin/install-asahi-quattro
+omarchy-pkgs/.github/workflows/promote-asahi-quattro-runtime.yml</title>
+<rect x="30.0" y="728" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="753.0">asahi-quattro channel pointer</text>
+<text class="n-sub" x="44.0" y="770.0">asahi-quattro-channel-&lt;N&gt;, resolved by max N</text>
+</g>
+<g class="node tone-ext kind-box" tabindex="0" data-title="external pinned inputs" data-sub="Arch Linux ARM + Asahi mirrors, m1n1, Asahi UEFI" data-paths="[&quot;omarchy-iso/builder/apple-platform-snapshot.json&quot;, &quot;omarchy-iso/builder/fetch-apple-platform-snapshot.sh&quot;, &quot;omarchy-iso/configs/pacman-online-arm.conf&quot;]" data-note="linux-asahi, mesa and the Apple firmware pieces come from here, not from omarchy-pkgs.">
+<title>external pinned inputs
+omarchy-iso/builder/apple-platform-snapshot.json
+omarchy-iso/builder/fetch-apple-platform-snapshot.sh
+omarchy-iso/configs/pacman-online-arm.conf</title>
+<rect x="598.0" y="92" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="612.0" y="117.0">external pinned inputs</text>
+<text class="n-sub" x="612.0" y="134.0">Arch Linux ARM + Asahi mirrors, m1n1, Asahi UEFI</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/omarchy-iso-make" data-sub="--arch aarch64 --artifact asahi-os-package" data-paths="[&quot;omarchy-iso/bin/omarchy-iso-make&quot;, &quot;omarchy-iso/builder/asahi-lifecycle-lease.py&quot;]" data-note="Takes a host lease so two payload builds can never share a checkpoint root.">
+<title>bin/omarchy-iso-make
+omarchy-iso/bin/omarchy-iso-make
+omarchy-iso/builder/asahi-lifecycle-lease.py</title>
+<rect x="598.0" y="170" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="612.0" y="195.0">bin/omarchy-iso-make</text>
+<text class="n-sub" x="612.0" y="212.0">--arch aarch64 --artifact asahi-os-package</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="toolchain container" data-sub="asahi-toolchain.Containerfile, pinned by asahi-build-lock.json" data-paths="[&quot;omarchy-iso/builder/asahi-toolchain.Containerfile&quot;, &quot;omarchy-iso/builder/asahi-build-lock.json&quot;, &quot;omarchy-iso/builder/ensure-asahi-toolchain-image.sh&quot;]" data-note="Base image, toolchain package set and Node version are all pinned in the lock file.">
+<title>toolchain container
+omarchy-iso/builder/asahi-toolchain.Containerfile
+omarchy-iso/builder/asahi-build-lock.json
+omarchy-iso/builder/ensure-asahi-toolchain-image.sh</title>
+<rect x="598.0" y="248" width="424.0" height="60" rx="10"/>
+<text class="n-title" x="612.0" y="273.0">toolchain container</text>
+<text class="n-sub" x="612.0" y="290.0">asahi-toolchain.Containerfile, pinned by asahi-build-lock.json</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="pinned build inputs" data-sub="products/omarchy-mx-mac.json — arm-package-snapshots.conf · pacman-online-arm.conf" data-paths="[&quot;omarchy-iso/builder/products/omarchy-mx-mac.json&quot;, &quot;omarchy-iso/builder/arm-package-snapshots.conf&quot;, &quot;omarchy-iso/builder/fetch-arm-package-snapshots.sh&quot;, &quot;omarchy-iso/configs/pacman-online-arm.conf&quot;]" data-note="The product json carries partition layout and package_filename. The snapshot conf names the omarchy-pkgs release tag, descriptor sha256, signing fingerprint and package count.">
+<title>pinned build inputs
+omarchy-iso/builder/products/omarchy-mx-mac.json
+omarchy-iso/builder/arm-package-snapshots.conf
+omarchy-iso/builder/fetch-arm-package-snapshots.sh
+omarchy-iso/configs/pacman-online-arm.conf</title>
+<rect x="598.0" y="326" width="424.0" height="77" rx="10"/>
+<text class="n-title" x="612.0" y="351.0">pinned build inputs</text>
+<text class="n-sub" x="612.0" y="368.0">products/omarchy-mx-mac.json</text>
+<text class="n-sub" x="612.0" y="385.0">arm-package-snapshots.conf · pacman-online-arm.conf</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="eight-stage pipeline — builder/asahi-stages/" data-sub="builder-toolchain → verified-package-cache → — offline-repository-database → base-images → configured-target → — finalized-boot → sealed-release-package → installer-metadata" data-paths="[&quot;omarchy-iso/builder/asahi-stage-inputs.json&quot;, &quot;omarchy-iso/builder/asahi-stages/&quot;, &quot;omarchy-iso/builder/build-asahi-os-package.sh&quot;]" data-note="Stage order and per-stage inputs live in asahi-stage-inputs.json; each stage declares what it depends on so the checkpoint store knows what to invalidate.">
+<title>eight-stage pipeline — builder/asahi-stages/
+omarchy-iso/builder/asahi-stage-inputs.json
+omarchy-iso/builder/asahi-stages/
+omarchy-iso/builder/build-asahi-os-package.sh</title>
+<rect x="598.0" y="425" width="424.0" height="94" rx="10"/>
+<text class="n-title" x="612.0" y="450.0">eight-stage pipeline — builder/asahi-stages/</text>
+<text class="n-sub" x="612.0" y="467.0">builder-toolchain → verified-package-cache →</text>
+<text class="n-sub" x="612.0" y="484.0">offline-repository-database → base-images → configured-target →</text>
+<text class="n-sub" x="612.0" y="501.0">finalized-boot → sealed-release-package → installer-metadata</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="checkpoint store" data-sub="content-addressed reuse" data-paths="[&quot;OMARCHY_ASAHI_CHECKPOINT_ROOT (checkpoints/ objects/ builder-toolchain/)&quot;, &quot;omarchy-iso/builder/asahi_checkpoint.py&quot;, &quot;omarchy-iso/bin/omarchy-iso-asahi-checkpoint-reset&quot;]" data-note="A full build needs roughly 40 GB in this root plus Docker growth on the host. The reset helper clears checkpoints but keeps the toolchain.">
+<title>checkpoint store
+OMARCHY_ASAHI_CHECKPOINT_ROOT (checkpoints/ objects/ builder-toolchain/)
+omarchy-iso/builder/asahi_checkpoint.py
+omarchy-iso/bin/omarchy-iso-asahi-checkpoint-reset</title>
+<rect x="598.0" y="560" width="205.0" height="60" rx="10"/>
+<text class="n-title" x="612.0" y="585.0">checkpoint store</text>
+<text class="n-sub" x="612.0" y="602.0">content-addressed reuse</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="in-build validator" data-sub="verify-asahi-os-package.py" data-paths="[&quot;omarchy-iso/builder/verify-asahi-os-package.py&quot;, &quot;omarchy-iso/builder/verify-asahi-installed-system.py&quot;]" data-note="Runs inside the installer-metadata stage against the sealed zip and the product json. A failure here stops the release rather than shipping a broken payload.">
+<title>in-build validator
+omarchy-iso/builder/verify-asahi-os-package.py
+omarchy-iso/builder/verify-asahi-installed-system.py</title>
+<rect x="817.0" y="560" width="205.0" height="60" rx="10"/>
+<text class="n-title" x="831.0" y="585.0">in-build validator</text>
+<text class="n-sub" x="831.0" y="602.0">verify-asahi-os-package.py</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="sealed payload" data-sub="omarchy-&lt;date&gt;-aarch64-apple-silicon-asahi-os-package.zip — + .installer-data.json  + .asahi-package-evidence.json" data-paths="[&quot;omarchy-iso/release/&quot;, &quot;omarchy-iso/builder/asahi-release-publication.py&quot;, &quot;omarchy-iso/release/build-evidence/&lt;run&gt;/build-report.json&quot;]" data-note="Deterministic zip built with SOURCE_DATE_EPOCH. Publication refuses to overwrite an existing release of the same name with different bytes.">
+<title>sealed payload
+omarchy-iso/release/
+omarchy-iso/builder/asahi-release-publication.py
+omarchy-iso/release/build-evidence/&lt;run&gt;/build-report.json</title>
+<rect x="598.0" y="655" width="424.0" height="77" rx="10"/>
+<text class="n-title" x="612.0" y="680.0">sealed payload</text>
+<text class="n-sub" x="612.0" y="697.0">omarchy-&lt;date&gt;-aarch64-apple-silicon-asahi-os-package.zip</text>
+<text class="n-sub" x="612.0" y="714.0">+ .installer-data.json  + .asahi-package-evidence.json</text>
+</g>
+<g class="node tone-ext kind-box" tabindex="0" data-title="Asahi installer upstream v0.9.0" data-sub="pinned by Engine/source-lock.json" data-paths="[&quot;omarchy-mx-mac/apps/omarchy-apple-installer/Engine/source-lock.json&quot;, &quot;omarchy-mx-mac/apps/omarchy-apple-installer/Engine/verify-source-lock.py&quot;]" data-note="Pins the AsahiLinux/asahi-installer commit plus its m1n1 and artwork submodules.">
+<title>Asahi installer upstream v0.9.0
+omarchy-mx-mac/apps/omarchy-apple-installer/Engine/source-lock.json
+omarchy-mx-mac/apps/omarchy-apple-installer/Engine/verify-source-lock.py</title>
+<rect x="1166.0" y="92" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="117.0">Asahi installer upstream v0.9.0</text>
+<text class="n-sub" x="1180.0" y="134.0">pinned by Engine/source-lock.json</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="engine build" data-sub="Engine/build-locked-engine.sh → installer-*.tar.gz" data-paths="[&quot;\u2026/Engine/build-locked-engine.sh&quot;, &quot;\u2026/Engine/patches/&quot;, &quot;\u2026/Engine/overlay/src/&quot;, &quot;\u2026/Engine/installer_data.json&quot;, &quot;\u2026/Engine/artifacts/&quot;]" data-note="Applies the downstream patches and overlay to the pinned upstream tree. installer_data.json names the payload and the ESP/boot/root partition plan.">
+<title>engine build
+…/Engine/build-locked-engine.sh
+…/Engine/patches/
+…/Engine/overlay/src/
+…/Engine/installer_data.json
+…/Engine/artifacts/</title>
+<rect x="1166.0" y="170" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="195.0">engine build</text>
+<text class="n-sub" x="1180.0" y="212.0">Engine/build-locked-engine.sh → installer-*.tar.gz</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="app build + Developer ID signature" data-sub="Packaging/build-app.sh" data-paths="[&quot;\u2026/Package.swift&quot;, &quot;\u2026/Packaging/build-app.sh&quot;, &quot;\u2026/Sources/OmarchyAppleInstaller/&quot;]" data-note="SwiftPM builds the app and helper, embeds the engine tarball plus its digest, then codesigns with the Developer ID Application identity.">
+<title>app build + Developer ID signature
+…/Package.swift
+…/Packaging/build-app.sh
+…/Sources/OmarchyAppleInstaller/</title>
+<rect x="1166.0" y="248" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="273.0">app build + Developer ID signature</text>
+<text class="n-sub" x="1180.0" y="290.0">Packaging/build-app.sh</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="notarize + staple" data-sub="Packaging/notarize-app.sh" data-paths="[&quot;\u2026/Packaging/notarize-app.sh&quot;, &quot;xcrun notarytool submit \u00b7 stapler staple&quot;]" data-note="">
+<title>notarize + staple
+…/Packaging/notarize-app.sh
+xcrun notarytool submit · stapler staple</title>
+<rect x="1166.0" y="318" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="343.0">notarize + staple</text>
+<text class="n-sub" x="1180.0" y="360.0">Packaging/notarize-app.sh</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="signed, notarized .pkg" data-sub="Packaging/pkg/build-pkg.sh" data-paths="[&quot;\u2026/Packaging/pkg/build-pkg.sh&quot;, &quot;\u2026/Packaging/pkg/derive-daemon-plist&quot;, &quot;\u2026/scripts/postinstall&quot;]" data-note="Payload is the app in /Applications plus the helper LaunchDaemon. Signed with the Developer ID Installer identity and notarized again.">
+<title>signed, notarized .pkg
+…/Packaging/pkg/build-pkg.sh
+…/Packaging/pkg/derive-daemon-plist
+…/scripts/postinstall</title>
+<rect x="1166.0" y="388" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="413.0">signed, notarized .pkg</text>
+<text class="n-sub" x="1180.0" y="430.0">Packaging/pkg/build-pkg.sh</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="signed catalog + pinned trust root" data-sub="make-unsigned-catalog.py → catalog-signing.swift" data-paths="[&quot;\u2026/scripts/make-unsigned-catalog.py&quot;, &quot;\u2026/scripts/catalog-signing.swift&quot;, &quot;\u2026/scripts/release-inputs.template.json&quot;, &quot;\u2026/scripts/make-release-descriptor&quot;, &quot;\u2026/Release/  release.json + trust-root.ed25519.pub (packaging inputs, not committed)&quot;]" data-note="Monotonic sequence number, pins the payload/engine/metadata digests. Packaging copies the trust root into the app bundle, and the app refuses any catalog it cannot verify against it. The private key stays in the operator&#x27;s login keychain.">
+<title>signed catalog + pinned trust root
+…/scripts/make-unsigned-catalog.py
+…/scripts/catalog-signing.swift
+…/scripts/release-inputs.template.json
+…/scripts/make-release-descriptor
+…/Release/  release.json + trust-root.ed25519.pub (packaging inputs, not committed)</title>
+<rect x="1166.0" y="466" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="491.0">signed catalog + pinned trust root</text>
+<text class="n-sub" x="1180.0" y="508.0">make-unsigned-catalog.py → catalog-signing.swift</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="publish" data-sub="publish-m1-release publish-r2 · publish-channels" data-paths="[&quot;\u2026/scripts/publish-m1-release&quot;, &quot;\u2026/scripts/publish-channels&quot;, &quot;\u2026/scripts/assemble-candidate-v8.sh&quot;]" data-note="Uploads, then re-downloads every asset through the public domain and re-checks it against SHA256SUMS. Never clobbers an existing key.">
+<title>publish
+…/scripts/publish-m1-release
+…/scripts/publish-channels
+…/scripts/assemble-candidate-v8.sh</title>
+<rect x="1166.0" y="544" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="569.0">publish</text>
+<text class="n-sub" x="1180.0" y="586.0">publish-m1-release publish-r2 · publish-channels</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="Cloudflare R2 — omarchy-releases" data-sub="downloads.aicodelabs.com.au" data-paths="[&quot;releases/&lt;tag&gt;/  payload \u00b7 engine \u00b7 installer_data.json \u00b7 SHA256SUMS&quot;, &quot;releases/&lt;tag&gt;/  catalog.json + .sig \u00b7 release.json \u00b7 trust-root.ed25519.pub&quot;, &quot;channels/&lt;stable|beta&gt;/  catalog.signed.json \u00b7 channel.json&quot;, &quot;installer/&lt;channel&gt;/  Omarchy-MX-Mac-Installer.pkg \u00b7 installer.json&quot;]" data-note="Everything under releases/ is immutable. Only four channel keys are ever rewritten, which is what makes a promotion a pointer move rather than a rebuild.">
+<title>Cloudflare R2 — omarchy-releases
+releases/&lt;tag&gt;/  payload · engine · installer_data.json · SHA256SUMS
+releases/&lt;tag&gt;/  catalog.json + .sig · release.json · trust-root.ed25519.pub
+channels/&lt;stable|beta&gt;/  catalog.signed.json · channel.json
+installer/&lt;channel&gt;/  Omarchy-MX-Mac-Installer.pkg · installer.json</title>
+<rect x="1166.0" y="614" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="639.0">Cloudflare R2 — omarchy-releases</text>
+<text class="n-sub" x="1180.0" y="656.0">downloads.aicodelabs.com.au</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="user&#x27;s Mac → installed Asahi system" data-sub="" data-paths="[&quot;Omarchy-MX-Mac-Installer.pkg \u2192 /Applications&quot;, &quot;Asahi partitions on the internal SSD&quot;]" data-note="">
+<title>user&#x27;s Mac → installed Asahi system
+Omarchy-MX-Mac-Installer.pkg → /Applications
+Asahi partitions on the internal SSD</title>
+<rect x="1166.0" y="706" width="440.0" height="43" rx="10"/>
+<text class="n-title" x="1180.0" y="731.0">user&#x27;s Mac → installed Asahi system</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/omarchy-update-asahi-repository" data-sub="repoints /etc/pacman.conf [omarchy] at the newest stable tag" data-paths="[&quot;omarchy-mx-mac/bin/omarchy-update-asahi-repository&quot;, &quot;/var/lib/omarchy/asahi-package-repository&quot;, &quot;/usr/share/omarchy/default/omarchy-arm-repository.asc&quot;]" data-note="Verifies the descriptor signature before moving the pointer, and refuses to move it backwards.">
+<title>bin/omarchy-update-asahi-repository
+omarchy-mx-mac/bin/omarchy-update-asahi-repository
+/var/lib/omarchy/asahi-package-repository
+/usr/share/omarchy/default/omarchy-arm-repository.asc</title>
+<rect x="1166.0" y="764" width="440.0" height="60" rx="10"/>
+<text class="n-title" x="1180.0" y="789.0">bin/omarchy-update-asahi-repository</text>
+<text class="n-sub" x="1180.0" y="806.0">repoints /etc/pacman.conf [omarchy] at the newest stable tag</text>
+</g>
+<text class="edge-label" x="526.0" y="514.2">pins the repo release</text>
+<text class="edge-label" x="1094.0" y="438.8">installer_data.json</text>
+<text class="edge-label" x="1094.0" y="625.8">payload</text>
+<text class="edge-label" x="691.0" y="822.0">quattro bootstrap during a fresh install</text>
+<text class="edge-label" x="933.0" y="904.0">installed machines follow the newest promoted repo</text>
+</svg>
+</div>
+<div class="panel idle" id="panel"><h2>Hover or tab a box to see the files behind it.</h2></div>
+<footer>Hover, or tab through the boxes, to see the real file paths behind each step.</footer>
+</main>
+<script>
+(function () {
+  var panel = document.getElementById('panel');
+  var idle = panel.innerHTML;
+  function esc(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function show(g) {
+    var paths = JSON.parse(g.getAttribute('data-paths') || '[]');
+    var sub = g.getAttribute('data-sub') || '';
+    var note = g.getAttribute('data-note') || '';
+    var h = '<h2>' + esc(g.getAttribute('data-title')) + '</h2>';
+    if (sub) h += '<p class="p-sub">' + esc(sub) + '</p>';
+    if (paths.length) h += '<ul>' + paths.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>';
+    if (note) h += '<p class="p-note">' + esc(note) + '</p>';
+    panel.className = 'panel';
+    panel.innerHTML = h;
+  }
+  function reset() { panel.className = 'panel idle'; panel.innerHTML = idle; }
+  document.querySelectorAll('g.node').forEach(function (g) {
+    g.addEventListener('pointerover', function () { show(g); });
+    g.addEventListener('focus', function () { show(g); });
+    g.addEventListener('blur', reset);
+  });
+  document.querySelector('.canvas').addEventListener('pointerleave', reset);
+})();
+</script>
+</body>
+</html>

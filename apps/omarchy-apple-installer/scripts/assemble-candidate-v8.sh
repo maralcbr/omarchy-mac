@@ -138,22 +138,14 @@ read_pinned_value() {
   printf '%s\n' "$value"
 }
 
-read_python_constant() {
-  local file=$1 name=$2 value
-  value=$(
-    awk -v name="$name" '
-      $0 ~ "^" name " = \"" {
-        line = $0
-        sub("^" name " = \"", "", line)
-        sub("\"$", "", line)
-        print line
-        exit
-      }
-    ' "$file"
-  )
-  [[ -n $value ]] || die "cannot read $name from $file"
+read_release_input() {
+  local file=$1 key=$2 value
+  value=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$file" "$key" 2>/dev/null) ||
+    die "could not read $key from $file"
+  [[ -n $value ]] || die "empty $key in $file"
   printf '%s\n' "$value"
 }
+
 
 write_manifest() {
   local out=$1 payload_name=$2 payload_digest=$3 payload_size=$4
@@ -238,10 +230,12 @@ main() {
   local notarize_app="$app_package/Packaging/notarize-app.sh"
   local publisher="$app_package/scripts/publish-m1-release"
   local generator="$app_package/scripts/make-unsigned-catalog.py"
+  local release_inputs="$app_package/scripts/release-inputs.template.json"
   require_regular_file "$build_app"
   require_regular_file "$notarize_app"
   require_regular_file "$publisher"
   require_regular_file "$generator"
+  require_regular_file "$release_inputs"
 
   require_real_directory "$reference"
   local signing_tool="$reference/catalog/catalog-signing.swift"
@@ -287,21 +281,21 @@ main() {
   fi
 
   # ---- generator name agreement ------------------------------------------
-  step "Catalog generator name agreement"
+  step "Catalog inputs name agreement"
   local generator_payload generator_engine generator_metadata generator_evidence
-  generator_payload=$(read_python_constant "$generator" PAYLOAD_NAME) || exit 1
-  generator_engine=$(read_python_constant "$generator" ENGINE_NAME) || exit 1
-  generator_metadata=$(read_python_constant "$generator" METADATA_NAME) || exit 1
-  generator_evidence=$(read_python_constant "$generator" EVIDENCE_REVISION) || exit 1
+  generator_payload=$(read_release_input "$release_inputs" payload_name) || exit 1
+  generator_engine=$(read_release_input "$release_inputs" engine_name) || exit 1
+  generator_metadata=$(read_release_input "$release_inputs" metadata_name) || exit 1
+  generator_evidence=$(read_release_input "$release_inputs" evidence_revision) || exit 1
   [[ $generator_payload == "$payload_name" ]] ||
-    warn "make-unsigned-catalog.py pins PAYLOAD_NAME=$generator_payload but this payload is $payload_name; update the constant before generating the catalog"
+    warn "release inputs pin payload_name=$generator_payload but this payload is $payload_name; update the inputs before generating the catalog"
   [[ $generator_engine == "$engine_name" ]] ||
-    warn "make-unsigned-catalog.py pins ENGINE_NAME=$generator_engine but the app package pins $engine_name"
+    warn "release inputs pin engine_name=$generator_engine but the app package pins $engine_name"
   [[ $generator_metadata == "installer_data.json" ]] ||
-    warn "make-unsigned-catalog.py pins METADATA_NAME=$generator_metadata"
+    warn "release inputs pin metadata_name=$generator_metadata"
   case $generator_evidence in
-    *v8*) echo "  EVIDENCE_REVISION=$generator_evidence" ;;
-    *) warn "make-unsigned-catalog.py still declares EVIDENCE_REVISION=$generator_evidence; bump it for the v8 generation" ;;
+    *v8*) echo "  evidence_revision=$generator_evidence" ;;
+    *) warn "release inputs still declare evidence_revision=$generator_evidence; bump it for the v8 generation" ;;
   esac
 
   # ---- reference signing tool --------------------------------------------
@@ -479,15 +473,15 @@ release exists, which is why the catalog can be generated next.
 
 ## 2. Generate the unsigned catalog (TEMPLATED — not run by the assembler)
 
-Confirm first that \`scripts/make-unsigned-catalog.py\` pins the right names and
+Confirm first that \`scripts/release-inputs.template.json\` pins the right names and
 evidence revision for this generation (\`PAYLOAD_NAME\`, \`ENGINE_NAME\`,
-\`EVIDENCE_REVISION\`, \`DOWNSTREAM_REVISION\`), then:
+\`evidence_revision\`, \`downstream_revision\`), then:
 
 \`\`\`bash
 python3 "\$APP/scripts/make-unsigned-catalog.py" \\
   --base-url "\$BASE_URL" \\
   --assets-dir "\$DIST" \\
-  --validity-days 90 \\
+  --inputs "\$APP/scripts/release-inputs.template.json" \\
   --output "\$CANDIDATE/catalog/unsigned/catalog.json"
 \`\`\`
 
@@ -628,7 +622,7 @@ NEXTSTEPS
   echo "       --metadata $out/engine/installer_data.json \\"
   echo "       --tag $tag --repo $release_repo --out-dir $dist_dir"
   echo "  3. python3 $generator --base-url $base_url \\"
-  echo "       --assets-dir $dist_dir --validity-days 90 \\"
+  echo "       --assets-dir $dist_dir --inputs $release_inputs \\"
   echo "       --output $out/catalog/unsigned/catalog.json"
   echo "  4. OWNER: ephemeral-key signing ritual (mint in a 0700 mktemp dir,"
   echo "     sign, write release.json, verify -> catalog_signature=passed,"

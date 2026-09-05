@@ -32,6 +32,15 @@ grep -Fq 'repository_status == 3' "$update" || fail "repository listing outages 
 awk '/omarchy-update-asahi-repository --yes/ { seen = 1 } seen && /omarchy-update-system-pkgs$/ { ordered = 1 } END { exit !ordered }' "$update" ||
   fail "the repository is repointed before the system package upgrade"
 grep -Fq 'omarchy-update-asahi-repository' "$update_available" || fail "availability checks include the package repository"
+# A failed repoint leaves the previous signed snapshot pinned, which still
+# installs, so it must not take the whole system update down with it.
+awk '/repository_status != 0/ { getline; if ($0 ~ /exit/) exit 1 } END { exit 0 }' "$update" ||
+  fail "a failed repository repoint continues to the package upgrade"
+grep -Fq 'continuing with the pinned snapshot' "$update" ||
+  fail "a failed repository repoint says the pinned snapshot is still in use"
+# Candidate, channel and snapshot tags accumulate, so the newest snapshot can
+# fall past the first page of the release listing.
+grep -Fq '&page=$page' "$updater" || fail "repository updater pages through the release listing"
 pass "Apple Silicon package repository updates are wired into the update flow"
 
 test_tmp=$(mktemp -d)

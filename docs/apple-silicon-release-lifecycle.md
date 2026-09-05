@@ -54,6 +54,12 @@ and binds the record to a retained evidence SHA-256 and catalog sequence.
 Unsupported or incomplete identifiers remain absent from the signed catalog
 and must stop before authorization or disk mutation.
 
+The mechanics of publishing — the channel layout, the signing key, and the
+commands for each step — are in
+[`apple-silicon-distribution-channels.md`](apple-silicon-distribution-channels.md).
+This document governs *when* a release may be published; that one describes
+*how*.
+
 ## 3. Publish a preview
 
 Preview publication requires a separate explicit authorization after all of
@@ -67,7 +73,8 @@ these are true:
 4. recovery, rollback, removal, and known-limitations text has been reviewed;
 5. the public object set has been fetched back and every hash/signature checked.
 
-Publish to the signed Apple preview channel first. Only at this gate may the
+Publish to the beta channel first (`publish-channels os-promote --to beta`),
+and promote to stable only after the evidence above is complete. Only at this gate may the
 top-level README replace the current Asahi Arch Minimal instructions with the
 macOS Omarchy installer → Asahi bridge → verified Apple media flow. The README
 must name the exact allowlisted models and continue stating that Asahi supplies

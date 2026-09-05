@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Upstream Omarchy&#x27;s build pipeline, with the aarch64 and Apple Silicon / Asahi additions marked as either merged upstream or still pending on local branches.">
+<title>omacom/omarchy — Build Architecture and the aarch64 Overlay</title>
+<style>
+:root {
+  --bg: #edf0f4; --surface: #ffffff; --surface-muted: #f3f5f8;
+  --ink: #17191d; --muted: #626873; --line: #d8dde5;
+  --accent: #2b55ed; --accent-soft: #e8edff;
+  --success: #16794b; --success-soft: #e7f6ee;
+  --warning: #8a5a00; --warning-soft: #fff3d2;
+  --future: #6847c7; --future-soft: #f0ebff;
+  --shadow: 0 20px 55px rgb(18 25 38 / 11%);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1116; --surface: #181b21; --surface-muted: #20242c;
+    --ink: #f2f4f7; --muted: #aab1bb; --line: #343a45;
+    --accent: #8ca7ff; --accent-soft: #202c51;
+    --success: #66d19c; --success-soft: #15372a;
+    --warning: #f0c15d; --warning-soft: #3e3014;
+    --future: #b39cff; --future-soft: #2d2450;
+    --shadow: 0 20px 55px rgb(0 0 0 / 35%);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; max-width: 100%; overflow-x: hidden; background: var(--bg); color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { padding: clamp(16px, 2.4vw, 40px); }
+main { max-width: 1640px; margin: 0 auto; min-width: 0; }
+header { margin-bottom: 18px; }
+h1 { font-size: clamp(20px, 2.2vw, 30px); margin: 0 0 6px; letter-spacing: -0.015em; }
+.lede { margin: 0; color: var(--muted); font-size: 14px; max-width: 92ch; line-height: 1.5; }
+.crosslink { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.crosslink a { color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 16px 0 12px;
+  font-size: 12.5px; color: var(--muted); align-items: center; }
+.legend .swatch { display: inline-flex; align-items: center; gap: 7px; }
+.legend .chip { width: 17px; height: 17px; border-radius: 5px;
+  border: 2px solid var(--line); background: var(--surface); flex: none; }
+.legend .chip.merged { border-color: var(--success); background: var(--success-soft); }
+.legend .chip.pending { border-color: var(--future); background: var(--future-soft);
+  border-style: dashed; border-width: 2.5px; }
+.legend .chip.ext { border-color: var(--muted); background: transparent; border-style: dashed; }
+.legend .chip.gate { border-color: var(--warning); background: var(--warning-soft); }
+.legend .chip.accent { border-color: var(--accent); background: var(--accent-soft); }
+.legend .chip.seam { background: repeating-linear-gradient(90deg, var(--muted) 0 6px, transparent 6px 11px);
+  border: 0; height: 2px; border-radius: 0; }
+.canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow); padding: 10px; overflow-x: auto; max-width: 100%; }
+svg { display: block; width: 100%; min-width: 1100px; height: auto; }
+.lane { fill: var(--surface-muted); stroke: var(--line); stroke-width: 1; }
+.lane-title { fill: var(--ink); font-size: 14px; font-weight: 650; }
+.lane-sub { fill: var(--muted); font-size: 11.5px; }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.6; opacity: 0.75; }
+.edge.dashed { stroke-dasharray: 6 5; }
+.arrowhead { fill: var(--muted); opacity: 0.85; }
+.edge-label { fill: var(--muted); font-size: 10.5px; text-anchor: middle;
+  paint-order: stroke; stroke: var(--surface-muted); stroke-width: 4px; stroke-linejoin: round; }
+.node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.6; }
+.node .n-title { fill: var(--ink); font-size: 12.5px; font-weight: 640; }
+.node .n-sub { fill: var(--muted); font-size: 11px; }
+.node { cursor: default; outline: none; }
+.node:hover rect, .node:focus rect { stroke-width: 2.6; }
+.node:focus rect { stroke: var(--accent); }
+.tone-accent rect { stroke: var(--accent); fill: var(--accent-soft); }
+.tone-merged rect { stroke: var(--success); fill: var(--success-soft); }
+.tone-pending rect { stroke: var(--future); fill: var(--future-soft); stroke-dasharray: 7 4; }
+.tone-warn rect { stroke: var(--warning); fill: var(--warning-soft); }
+.tone-ext rect { fill: transparent; stroke: var(--muted); stroke-dasharray: 5 4; }
+.kind-gate rect { stroke: var(--warning); fill: var(--warning-soft); }
+.panel { margin-top: 14px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px 16px; min-height: 104px; }
+.panel h2 { margin: 0 0 3px; font-size: 14.5px; }
+.panel .p-sub { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; }
+.panel ul { margin: 0; padding-left: 17px; }
+.panel li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere;
+  font-size: 12px; color: var(--ink); line-height: 1.65; word-break: break-all; }
+.panel .p-note { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.panel.idle h2 { color: var(--muted); font-weight: 500; }
+footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+@media (max-width: 700px) { .canvas { padding: 6px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>omacom/omarchy — build architecture, and what aarch64 adds</h1>
+<p class="lede">Upstream builds packages on a self-hosted machine driven by systemd timers, not in CI; GitHub Actions only opens metadata pull requests. Green boxes are aarch64 work that is already merged into upstream. Dashed purple boxes are the Apple Silicon / Asahi overlay still sitting on local branches. Everything else is upstream as it stands today.</p>
+<p class="crosslink">Companion page: <a href="build-architecture-mx-mac.html">the Omarchy MX Mac release pipeline</a>.</p>
+</header>
+<div class="legend"><span class="swatch"><span class="chip"></span>upstream as it stands</span><span class="swatch"><span class="chip merged"></span>aarch64 work already merged upstream</span><span class="swatch"><span class="chip pending"></span>aarch64 / Asahi work still on local branches</span><span class="swatch"><span class="chip accent"></span>published artefact</span><span class="swatch"><span class="chip gate" style="border-color:var(--warning)"></span>open blocker</span><span class="swatch"><span class="chip seam"></span>cross-repo seam</span></div>
+<div class="canvas">
+<svg viewBox="0 0 1658 1000" role="img" aria-label="Build architecture diagram" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+<rect class="lane" x="16" y="64" width="520" height="876" rx="14"/>
+<text class="lane-title" x="32" y="50">omacom/omarchy-pkgs — the build host</text>
+<text class="lane-sub" x="32" y="86">systemd timers on a self-hosted machine, not CI</text>
+<rect class="lane" x="652" y="64" width="404" height="876" rx="14"/>
+<text class="lane-title" x="668" y="50">omacom/omarchy-iso — install media</text>
+<text class="lane-sub" x="668" y="86">archiso, nightly</text>
+<rect class="lane" x="1172" y="64" width="470" height="876" rx="14"/>
+<text class="lane-title" x="1188" y="50">omacom/omarchy — config repo and installed machines</text>
+<text class="lane-sub" x="1188" y="86">packaged, then installed</text>
+<path class="edge" d="M 276.0 152.0 C 276.0 166.0 276.0 156.0 276.0 170.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 276.0 230.0 C 276.0 244.0 276.0 234.0 276.0 248.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 276.0 308.0 C 276.0 322.0 276.0 316.0 276.0 330.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 276.0 390.0 C 276.0 404.0 149.5 398.0 149.5 412.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 276.0 390.0 C 276.0 404.0 402.5 398.0 402.5 412.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 149.5 472.0 C 149.5 486.0 149.5 486.0 149.5 500.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 402.5 472.0 C 402.5 486.0 402.5 486.0 402.5 500.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 149.5 560.0 C 149.5 574.0 149.5 574.0 149.5 588.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 402.5 560.0 C 402.5 574.0 402.5 574.0 402.5 588.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 149.5 665.0 C 149.5 679.0 276.0 676.0 276.0 690.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 402.5 665.0 C 402.5 679.0 276.0 676.0 276.0 690.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 276.0 750.0 C 276.0 764.0 276.0 754.0 276.0 768.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 152.0 C 854.0 166.0 854.0 148.0 854.0 162.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 205.0 C 854.0 219.0 854.0 218.0 854.0 232.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 292.0 C 854.0 307.0 854.0 307.0 854.0 322.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 365.0 C 854.0 379.0 854.0 378.0 854.0 392.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 469.0 C 854.0 483.0 854.0 480.0 854.0 494.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 854.0 571.0 C 854.0 585.0 854.0 582.0 854.0 596.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 152.0 C 1407.0 166.0 1407.0 164.0 1407.0 178.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 255.0 C 1407.0 269.0 1407.0 266.0 1407.0 280.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 340.0 C 1407.0 354.0 1407.0 344.0 1407.0 358.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 401.0 C 1407.0 415.0 1407.0 414.0 1407.0 428.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 505.0 C 1407.0 519.0 1407.0 516.0 1407.0 530.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 607.0 C 1407.0 621.0 1407.0 618.0 1407.0 632.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 709.0 C 1407.0 723.0 1407.0 720.0 1407.0 734.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 1407.0 811.0 C 1407.0 828.5 1407.0 828.5 1407.0 846.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 1186.0 122.0 C 887.2 122.0 820.8 200.0 522.0 200.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 1186.0 216.5 C 1121.2 216.5 1106.8 262.0 1042.0 262.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 522.0 720.0 C 586.8 720.0 601.2 262.0 666.0 262.0" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 522.0 720.0 C 820.8 720.0 887.2 379.5 1186.0 379.5" marker-end="url(#arrow)"/>
+<path class="edge dashed" d="M 1042.0 617.5 C 1106.8 617.5 1121.2 867.5 1186.0 867.5" marker-end="url(#arrow)"/>
+<g class="node tone-plain kind-box" tabindex="0" data-title="GitHub Actions here are metadata bots only" data-sub="sync-aur · sync-upstream · sync-rebuilds — they open PRs" data-paths="[&quot;upstream/omarchy-pkgs/.github/workflows/sync-aur.yml&quot;, &quot;upstream/omarchy-pkgs/.github/workflows/sync-upstream.yml&quot;, &quot;upstream/omarchy-pkgs/.github/workflows/sync-rebuilds.yml&quot;, &quot;upstream/omarchy-pkgs/.github/workflows/test.yml&quot;]" data-note="No package is ever built in CI upstream. The bots only bump version metadata and raise pull requests; test.yml runs the repo&#x27;s own self-tests.">
+<title>GitHub Actions here are metadata bots only
+upstream/omarchy-pkgs/.github/workflows/sync-aur.yml
+upstream/omarchy-pkgs/.github/workflows/sync-upstream.yml
+upstream/omarchy-pkgs/.github/workflows/sync-rebuilds.yml
+upstream/omarchy-pkgs/.github/workflows/test.yml</title>
+<rect x="30.0" y="92" width="492.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="117.0">GitHub Actions here are metadata bots only</text>
+<text class="n-sub" x="44.0" y="134.0">sync-aur · sync-upstream · sync-rebuilds — they open PRs</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="package recipes" data-sub="pkgbuilds/&lt;pkg&gt;/PKGBUILD + .omarchy/package.json" data-paths="[&quot;upstream/omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/PKGBUILD&quot;, &quot;upstream/omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/.omarchy/package.json&quot;, &quot;upstream/omarchy-pkgs/helpers/package-metadata.sh&quot;]" data-note="Roughly 128 packages. The metadata schema covers source (aur or local), channels, release_ring, rebuild_on, min_release_age and pinning.">
+<title>package recipes
+upstream/omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/PKGBUILD
+upstream/omarchy-pkgs/pkgbuilds/&lt;pkg&gt;/.omarchy/package.json
+upstream/omarchy-pkgs/helpers/package-metadata.sh</title>
+<rect x="30.0" y="170" width="492.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="195.0">package recipes</text>
+<text class="n-sub" x="44.0" y="212.0">pkgbuilds/&lt;pkg&gt;/PKGBUILD + .omarchy/package.json</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="self-hosted build host — systemd timers" data-sub="check-versions every 5 min · auto-release edge/rc/stable" data-paths="[&quot;upstream/omarchy-pkgs/systemd/omarchy-check-versions.timer&quot;, &quot;upstream/omarchy-pkgs/systemd/omarchy-auto-release-{edge,rc,stable}.timer&quot;, &quot;upstream/omarchy-pkgs/bin/check-versions&quot;, &quot;upstream/omarchy-pkgs/bin/auto-release&quot;]" data-note="check-versions writes a queue file; auto-release picks it up under a lock with exponential backoff. This is the whole scheduler.">
+<title>self-hosted build host — systemd timers
+upstream/omarchy-pkgs/systemd/omarchy-check-versions.timer
+upstream/omarchy-pkgs/systemd/omarchy-auto-release-{edge,rc,stable}.timer
+upstream/omarchy-pkgs/bin/check-versions
+upstream/omarchy-pkgs/bin/auto-release</title>
+<rect x="30.0" y="248" width="492.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="273.0">self-hosted build host — systemd timers</text>
+<text class="n-sub" x="44.0" y="290.0">check-versions every 5 min · auto-release edge/rc/stable</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/release" data-sub="build → sign → promote-build → update-repo → sync-repo" data-paths="[&quot;upstream/omarchy-pkgs/bin/release&quot;, &quot;upstream/omarchy-pkgs/bin/build&quot;, &quot;upstream/omarchy-pkgs/bin/sign&quot;, &quot;upstream/omarchy-pkgs/bin/update-repo&quot;, &quot;upstream/omarchy-pkgs/bin/sync-repo&quot;, &quot;upstream/omarchy-pkgs/bin/advance-channel&quot;]" data-note="makepkg inside Docker, GPG-signed on the host, repo-add into the pacman database, then rsync to the public mirror. Channels advance edge → rc → stable.">
+<title>bin/release
+upstream/omarchy-pkgs/bin/release
+upstream/omarchy-pkgs/bin/build
+upstream/omarchy-pkgs/bin/sign
+upstream/omarchy-pkgs/bin/update-repo
+upstream/omarchy-pkgs/bin/sync-repo
+upstream/omarchy-pkgs/bin/advance-channel</title>
+<rect x="30.0" y="330" width="492.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="355.0">bin/release</text>
+<text class="n-sub" x="44.0" y="372.0">build → sign → promote-build → update-repo → sync-repo</text>
+</g>
+<g class="node tone-merged kind-box" tabindex="0" data-title="per-architecture build paths" data-sub="bin/build --arch · update_arch_paths" data-paths="[&quot;upstream/omarchy-pkgs/bin/build  (--arch x86_64|aarch64)&quot;, &quot;upstream/omarchy-pkgs/helpers/paths.sh  update_arch_paths&quot;, &quot;build-output/&lt;mirror&gt;/&lt;arch&gt;/&quot;]" data-note="Already merged into upstream master. Every build, sign, deploy and sync path is architecture-qualified.">
+<title>per-architecture build paths
+upstream/omarchy-pkgs/bin/build  (--arch x86_64|aarch64)
+upstream/omarchy-pkgs/helpers/paths.sh  update_arch_paths
+build-output/&lt;mirror&gt;/&lt;arch&gt;/</title>
+<rect x="30.0" y="412" width="239.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="437.0">per-architecture build paths</text>
+<text class="n-sub" x="44.0" y="454.0">bin/build --arch · update_arch_paths</text>
+</g>
+<g class="node tone-merged kind-box" tabindex="0" data-title="omarchy PKGBUILD widened" data-sub="depends_x86_64 vs depends_aarch64" data-paths="[&quot;upstream/omarchy-pkgs/pkgbuilds/omarchy/PKGBUILD&quot;, &quot;arch=(&#x27;x86_64&#x27; &#x27;aarch64&#x27;)&quot;]" data-note="Merged upstream. x86_64 keeps limine and snapper; aarch64 takes iwd and networkmanager instead, because the boot stack differs.">
+<title>omarchy PKGBUILD widened
+upstream/omarchy-pkgs/pkgbuilds/omarchy/PKGBUILD
+arch=(&#x27;x86_64&#x27; &#x27;aarch64&#x27;)</title>
+<rect x="283.0" y="412" width="239.0" height="60" rx="10"/>
+<text class="n-title" x="297.0" y="437.0">omarchy PKGBUILD widened</text>
+<text class="n-sub" x="297.0" y="454.0">depends_x86_64 vs depends_aarch64</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="PUBLISHED_ARCHES" data-sub="one release run per architecture" data-paths="[&quot;branch omacom/aarch64-host-pipeline&quot;, &quot;helpers/paths.sh  VALID_ARCHES \u00b7 PUBLISHED_ARCHES \u00b7 reference_arch()&quot;, &quot;.sync-needed-&lt;mirror&gt;-&lt;arch&gt; \u00b7 .build-failed-&lt;mirror&gt;-&lt;arch&gt;&quot;]" data-note="Not upstream yet. Without it the scheduler has a single implicit architecture, so a second one cannot be released on its own cadence.">
+<title>PUBLISHED_ARCHES
+branch omacom/aarch64-host-pipeline
+helpers/paths.sh  VALID_ARCHES · PUBLISHED_ARCHES · reference_arch()
+.sync-needed-&lt;mirror&gt;-&lt;arch&gt; · .build-failed-&lt;mirror&gt;-&lt;arch&gt;</title>
+<rect x="30.0" y="500" width="239.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="525.0">PUBLISHED_ARCHES</text>
+<text class="n-sub" x="44.0" y="542.0">one release run per architecture</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="defer_runtime_deps flag" data-sub="+ makepkg --packagelist outputs" data-paths="[&quot;branch omacom/aarch64-default-packages (74f7ace)&quot;, &quot;upstream/omarchy-pkgs/build/build.sh&quot;]" data-note="Generalises upstream&#x27;s hard-coded omarchy-pair special case into a per-package flag, and finds split package outputs properly instead of globbing.">
+<title>defer_runtime_deps flag
+branch omacom/aarch64-default-packages (74f7ace)
+upstream/omarchy-pkgs/build/build.sh</title>
+<rect x="283.0" y="500" width="239.0" height="60" rx="10"/>
+<text class="n-title" x="297.0" y="525.0">defer_runtime_deps flag</text>
+<text class="n-sub" x="297.0" y="542.0">+ makepkg --packagelist outputs</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="new aarch64 PKGBUILDs" data-sub="obsidian · obs-studio · dotnet-core — qemu-user-static · pinta" data-paths="[&quot;branch omacom/aarch64-default-packages (1b20e7a)&quot;, &quot;pkgbuilds/{obsidian,obs-studio,dotnet-core,qemu-user-static,pinta}&quot;]" data-note="These five have no aarch64 build anywhere upstream or in Arch Linux ARM, so they had to be written from scratch to reach parity with the x86 default list.">
+<title>new aarch64 PKGBUILDs
+branch omacom/aarch64-default-packages (1b20e7a)
+pkgbuilds/{obsidian,obs-studio,dotnet-core,qemu-user-static,pinta}</title>
+<rect x="30.0" y="588" width="239.0" height="77" rx="10"/>
+<text class="n-title" x="44.0" y="613.0">new aarch64 PKGBUILDs</text>
+<text class="n-sub" x="44.0" y="630.0">obsidian · obs-studio · dotnet-core</text>
+<text class="n-sub" x="44.0" y="647.0">qemu-user-static · pinta</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="arch-widened recipes" data-sub="asdcontrol · tzupdate · tensaku — hyprland-preview-share-picker" data-paths="[&quot;branch omacom/aarch64-default-packages&quot;, &quot;pkgbuilds/*/PKGBUILD  (fetch by $CARCH)&quot;]" data-note="Existing packages that only needed the architecture list opened up and the download URL selected by $CARCH.">
+<title>arch-widened recipes
+branch omacom/aarch64-default-packages
+pkgbuilds/*/PKGBUILD  (fetch by $CARCH)</title>
+<rect x="283.0" y="588" width="239.0" height="77" rx="10"/>
+<text class="n-title" x="297.0" y="613.0">arch-widened recipes</text>
+<text class="n-sub" x="297.0" y="630.0">asdcontrol · tzupdate · tensaku</text>
+<text class="n-sub" x="297.0" y="647.0">hyprland-preview-share-picker</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="pkgs.omarchy.org/&lt;channel&gt;/&lt;arch&gt;" data-sub="the public pacman repository" data-paths="[&quot;upstream/omarchy-pkgs/bin/sync-repo&quot;, &quot;pkgs.omarchy.org/{edge,rc,stable}/{x86_64,aarch64}&quot;, &quot;signing key 40DFB630\u2026&quot;]" data-note="">
+<title>pkgs.omarchy.org/&lt;channel&gt;/&lt;arch&gt;
+upstream/omarchy-pkgs/bin/sync-repo
+pkgs.omarchy.org/{edge,rc,stable}/{x86_64,aarch64}
+signing key 40DFB630…</title>
+<rect x="30.0" y="690" width="492.0" height="60" rx="10"/>
+<text class="n-title" x="44.0" y="715.0">pkgs.omarchy.org/&lt;channel&gt;/&lt;arch&gt;</text>
+<text class="n-sub" x="44.0" y="732.0">the public pacman repository</text>
+</g>
+<g class="node tone-warn kind-box" tabindex="0" data-title="today there is no aarch64 repo to serve" data-sub="pkgs.omarchy.org/stable/aarch64 returns 404 — the fork serves aarch64 from signed GitHub releases instead" data-paths="[&quot;configs/pacman-online-arm.conf  (see the comment in the file)&quot;, &quot;fork: github.com/maralcbr/omarchy-pkgs releases asahi-packages-stable-&lt;sha&gt;&quot;]" data-note="This is the live blocker. The recipes can build for aarch64 before the host publishes for it, but nothing reaches a machine until the mirror carries the architecture.">
+<title>today there is no aarch64 repo to serve
+configs/pacman-online-arm.conf  (see the comment in the file)
+fork: github.com/maralcbr/omarchy-pkgs releases asahi-packages-stable-&lt;sha&gt;</title>
+<rect x="30.0" y="768" width="492.0" height="77" rx="10"/>
+<text class="n-title" x="44.0" y="793.0">today there is no aarch64 repo to serve</text>
+<text class="n-sub" x="44.0" y="810.0">pkgs.omarchy.org/stable/aarch64 returns 404</text>
+<text class="n-sub" x="44.0" y="827.0">the fork serves aarch64 from signed GitHub releases instead</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="nightly-build.yml" data-sub="cron, once a day" data-paths="[&quot;upstream/omarchy-iso/.github/workflows/nightly-build.yml&quot;]" data-note="The ISO is the one thing upstream does build in CI.">
+<title>nightly-build.yml
+upstream/omarchy-iso/.github/workflows/nightly-build.yml</title>
+<rect x="666.0" y="92" width="376.0" height="60" rx="10"/>
+<text class="n-title" x="680.0" y="117.0">nightly-build.yml</text>
+<text class="n-sub" x="680.0" y="134.0">cron, once a day</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/omarchy-iso-make → builder/build-iso.sh" data-sub="" data-paths="[&quot;upstream/omarchy-iso/bin/omarchy-iso-make&quot;, &quot;upstream/omarchy-iso/builder/build-iso.sh&quot;]" data-note="">
+<title>bin/omarchy-iso-make → builder/build-iso.sh
+upstream/omarchy-iso/bin/omarchy-iso-make
+upstream/omarchy-iso/builder/build-iso.sh</title>
+<rect x="666.0" y="162" width="376.0" height="43" rx="10"/>
+<text class="n-title" x="680.0" y="187.0">bin/omarchy-iso-make → builder/build-iso.sh</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="archiso submodule + configs/ overlay" data-sub="pacstrap into an offline mirror" data-paths="[&quot;upstream/omarchy-iso/configs/&quot;, &quot;upstream/omarchy-iso/builder/omarchy.gpg&quot;, &quot;upstream/omarchy-iso/builder/prune-offline-mirror.sh&quot;, &quot;upstream/omarchy-iso/configs/pacman-online-stable.conf&quot;]" data-note="The media carries its own offline mirror so a fresh install does not need the network.">
+<title>archiso submodule + configs/ overlay
+upstream/omarchy-iso/configs/
+upstream/omarchy-iso/builder/omarchy.gpg
+upstream/omarchy-iso/builder/prune-offline-mirror.sh
+upstream/omarchy-iso/configs/pacman-online-stable.conf</title>
+<rect x="666.0" y="232" width="376.0" height="60" rx="10"/>
+<text class="n-title" x="680.0" y="257.0">archiso submodule + configs/ overlay</text>
+<text class="n-sub" x="680.0" y="274.0">pacstrap into an offline mirror</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="release/*.iso  (x86_64)" data-sub="" data-paths="[&quot;upstream/omarchy-iso/release/&quot;, &quot;upstream/omarchy-iso/bin/omarchy-iso-sign \u00b7 -upload \u00b7 -release&quot;]" data-note="">
+<title>release/*.iso  (x86_64)
+upstream/omarchy-iso/release/
+upstream/omarchy-iso/bin/omarchy-iso-sign · -upload · -release</title>
+<rect x="666.0" y="322" width="376.0" height="43" rx="10"/>
+<text class="n-title" x="680.0" y="347.0">release/*.iso  (x86_64)</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="aarch64 media support" data-sub="architecture.sh · package-architecture.sh — packages.aarch64-exclude · archiso-aarch64.patch" data-paths="[&quot;branch omacom/aarch64-iso&quot;, &quot;upstream/omarchy-iso/builder/architecture.sh&quot;, &quot;upstream/omarchy-iso/builder/package-architecture.sh&quot;, &quot;upstream/omarchy-iso/builder/packages.aarch64-exclude&quot;, &quot;upstream/omarchy-iso/builder/archiso-aarch64.patch&quot;]" data-note="archiso itself assumes x86 boot; the patch and the exclude list are what let the same builder produce aarch64 media.">
+<title>aarch64 media support
+branch omacom/aarch64-iso
+upstream/omarchy-iso/builder/architecture.sh
+upstream/omarchy-iso/builder/package-architecture.sh
+upstream/omarchy-iso/builder/packages.aarch64-exclude
+upstream/omarchy-iso/builder/archiso-aarch64.patch</title>
+<rect x="666.0" y="392" width="376.0" height="77" rx="10"/>
+<text class="n-title" x="680.0" y="417.0">aarch64 media support</text>
+<text class="n-sub" x="680.0" y="434.0">architecture.sh · package-architecture.sh</text>
+<text class="n-sub" x="680.0" y="451.0">packages.aarch64-exclude · archiso-aarch64.patch</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="Arch Linux ARM + Asahi mirrors" data-sub="configs/pacman-online-arm.conf — linux-asahi, mesa and widevine come from here" data-paths="[&quot;upstream/omarchy-iso/configs/pacman-online-arm.conf&quot;, &quot;mirror.archlinuxarm.org  core \u00b7 extra \u00b7 alarm \u00b7 aur&quot;]" data-note="A second upstream package universe. Note there is no separate asahi-alarm pacman overlay in the tree — the Asahi pieces arrive through these mirrors.">
+<title>Arch Linux ARM + Asahi mirrors
+upstream/omarchy-iso/configs/pacman-online-arm.conf
+mirror.archlinuxarm.org  core · extra · alarm · aur</title>
+<rect x="666.0" y="494" width="376.0" height="77" rx="10"/>
+<text class="n-title" x="680.0" y="519.0">Arch Linux ARM + Asahi mirrors</text>
+<text class="n-sub" x="680.0" y="536.0">configs/pacman-online-arm.conf</text>
+<text class="n-sub" x="680.0" y="553.0">linux-asahi, mesa and widevine come from here</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="aarch64 install media" data-sub="" data-paths="[&quot;branch omacom/aarch64-iso&quot;]" data-note="">
+<title>aarch64 install media
+branch omacom/aarch64-iso</title>
+<rect x="666.0" y="596" width="376.0" height="43" rx="10"/>
+<text class="n-title" x="680.0" y="621.0">aarch64 install media</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="omacom/omarchy — packaged, not cloned" data-sub="shipped as the omarchy / omarchy-settings packages" data-paths="[&quot;upstream/omarchy/bin/  \u2192  /usr/bin&quot;, &quot;upstream/omarchy/{install,themes,migrations,shell,version}  \u2192  /usr/share/omarchy/&quot;, &quot;pkgbuilds/omarchy/PKGBUILD pins _commit&quot;]" data-note="There is no boot.sh or install.sh at the repo root any more. The config repo reaches a machine as a pacman package like anything else.">
+<title>omacom/omarchy — packaged, not cloned
+upstream/omarchy/bin/  →  /usr/bin
+upstream/omarchy/{install,themes,migrations,shell,version}  →  /usr/share/omarchy/
+pkgbuilds/omarchy/PKGBUILD pins _commit</title>
+<rect x="1186.0" y="92" width="442.0" height="60" rx="10"/>
+<text class="n-title" x="1200.0" y="117.0">omacom/omarchy — packaged, not cloned</text>
+<text class="n-sub" x="1200.0" y="134.0">shipped as the omarchy / omarchy-settings packages</text>
+</g>
+<g class="node tone-accent kind-box" tabindex="0" data-title="default package list" data-sub="install/omarchy-base.packages (150) — install/omarchy-other.packages (77)" data-paths="[&quot;upstream/omarchy/install/omarchy-base.packages&quot;, &quot;upstream/omarchy/install/omarchy-other.packages&quot;]" data-note="Read both by the ISO builder and by the target install, which is why the ISO depends on this repo and not the other way round.">
+<title>default package list
+upstream/omarchy/install/omarchy-base.packages
+upstream/omarchy/install/omarchy-other.packages</title>
+<rect x="1186.0" y="178" width="442.0" height="77" rx="10"/>
+<text class="n-title" x="1200.0" y="203.0">default package list</text>
+<text class="n-sub" x="1200.0" y="220.0">install/omarchy-base.packages (150)</text>
+<text class="n-sub" x="1200.0" y="237.0">install/omarchy-other.packages (77)</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="bin/omarchy-update → omarchy-migrate" data-sub="installed machines catch up" data-paths="[&quot;upstream/omarchy/bin/omarchy-update&quot;, &quot;upstream/omarchy/bin/omarchy-update-system-pkgs&quot;, &quot;upstream/omarchy/migrations/*.sh&quot;]" data-note="">
+<title>bin/omarchy-update → omarchy-migrate
+upstream/omarchy/bin/omarchy-update
+upstream/omarchy/bin/omarchy-update-system-pkgs
+upstream/omarchy/migrations/*.sh</title>
+<rect x="1186.0" y="280" width="442.0" height="60" rx="10"/>
+<text class="n-title" x="1200.0" y="305.0">bin/omarchy-update → omarchy-migrate</text>
+<text class="n-sub" x="1200.0" y="322.0">installed machines catch up</text>
+</g>
+<g class="node tone-plain kind-box" tabindex="0" data-title="[omarchy] Server = pkgs.omarchy.org/stable/$arch" data-sub="" data-paths="[&quot;/etc/pacman.conf on the installed machine&quot;, &quot;upstream/omarchy/install/post-install/pacman.sh&quot;]" data-note="">
+<title>[omarchy] Server = pkgs.omarchy.org/stable/$arch
+/etc/pacman.conf on the installed machine
+upstream/omarchy/install/post-install/pacman.sh</title>
+<rect x="1186.0" y="358" width="442.0" height="43" rx="10"/>
+<text class="n-title" x="1200.0" y="383.0">[omarchy] Server = pkgs.omarchy.org/stable/$arch</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="hardware detection guards" data-sub="omarchy-hw-apple-silicon · omarchy-pkg-available — omarchy-install-available" data-paths="[&quot;branch omacom/asahi-overlay&quot;, &quot;upstream/omarchy/bin/omarchy-hw-apple-silicon&quot;, &quot;upstream/omarchy/bin/omarchy-pkg-available&quot;, &quot;upstream/omarchy/bin/omarchy-install-available&quot;]" data-note="Apple Silicon is matched on the device tree. Everything Asahi-specific downstream is gated on this, so an x86 machine never sees any of it.">
+<title>hardware detection guards
+branch omacom/asahi-overlay
+upstream/omarchy/bin/omarchy-hw-apple-silicon
+upstream/omarchy/bin/omarchy-pkg-available
+upstream/omarchy/bin/omarchy-install-available</title>
+<rect x="1186.0" y="428" width="442.0" height="77" rx="10"/>
+<text class="n-title" x="1200.0" y="453.0">hardware detection guards</text>
+<text class="n-sub" x="1200.0" y="470.0">omarchy-hw-apple-silicon · omarchy-pkg-available</text>
+<text class="n-sub" x="1200.0" y="487.0">omarchy-install-available</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="optional-install manifests" data-sub="optional-packages.tsv (the install.preinstalls row) — optional-packages-aarch64-required (22 ids)" data-paths="[&quot;branch omacom/asahi-overlay&quot;, &quot;upstream/omarchy/install/optional-packages.tsv&quot;, &quot;upstream/omarchy/install/optional-aur-packages.tsv&quot;, &quot;upstream/omarchy/install/optional-packages-aarch64-required&quot;]" data-note="The aarch64-required list is the contract: these ids must exist for the architecture before the preinstall bundle is offered on it.">
+<title>optional-install manifests
+branch omacom/asahi-overlay
+upstream/omarchy/install/optional-packages.tsv
+upstream/omarchy/install/optional-aur-packages.tsv
+upstream/omarchy/install/optional-packages-aarch64-required</title>
+<rect x="1186.0" y="530" width="442.0" height="77" rx="10"/>
+<text class="n-title" x="1200.0" y="555.0">optional-install manifests</text>
+<text class="n-sub" x="1200.0" y="572.0">optional-packages.tsv (the install.preinstalls row)</text>
+<text class="n-sub" x="1200.0" y="589.0">optional-packages-aarch64-required (22 ids)</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="Asahi hardware fixes and migrations" data-sub="install/hardware/apple/fix-asahi-hid-race.sh — migrations/1788200001.sh · 1788200002.sh" data-paths="[&quot;branch omacom/asahi-overlay&quot;, &quot;upstream/omarchy/install/hardware/apple/fix-asahi-hid-race.sh&quot;, &quot;upstream/omarchy/migrations/1788200001.sh&quot;, &quot;upstream/omarchy/migrations/1788200002.sh&quot;, &quot;upstream/omarchy/docs/apple-silicon-trackpad.md&quot;]" data-note="Panel, trackpad and battery handling, plus a fix for the HID race on boot.">
+<title>Asahi hardware fixes and migrations
+branch omacom/asahi-overlay
+upstream/omarchy/install/hardware/apple/fix-asahi-hid-race.sh
+upstream/omarchy/migrations/1788200001.sh
+upstream/omarchy/migrations/1788200002.sh
+upstream/omarchy/docs/apple-silicon-trackpad.md</title>
+<rect x="1186.0" y="632" width="442.0" height="77" rx="10"/>
+<text class="n-title" x="1200.0" y="657.0">Asahi hardware fixes and migrations</text>
+<text class="n-sub" x="1200.0" y="674.0">install/hardware/apple/fix-asahi-hid-race.sh</text>
+<text class="n-sub" x="1200.0" y="691.0">migrations/1788200001.sh · 1788200002.sh</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="arch-aware edits to existing commands" data-sub="omarchy-refresh-pacman · omarchy-update-keyring — post-install/pacman.sh · hardware/{all,network,vulkan}.sh" data-paths="[&quot;branch omacom/asahi-overlay&quot;, &quot;upstream/omarchy/bin/omarchy-refresh-pacman  (refuses on Apple Silicon)&quot;, &quot;upstream/omarchy/bin/omarchy-update-keyring  (archlinuxarm-keyring)&quot;, &quot;upstream/omarchy/install/post-install/pacman.sh&quot;, &quot;upstream/omarchy/shell/plugins/menu/MenuModel.js&quot;]" data-note="These are edits, not new files: the same command has to behave differently on a base that is Arch Linux ARM rather than Arch.">
+<title>arch-aware edits to existing commands
+branch omacom/asahi-overlay
+upstream/omarchy/bin/omarchy-refresh-pacman  (refuses on Apple Silicon)
+upstream/omarchy/bin/omarchy-update-keyring  (archlinuxarm-keyring)
+upstream/omarchy/install/post-install/pacman.sh
+upstream/omarchy/shell/plugins/menu/MenuModel.js</title>
+<rect x="1186.0" y="734" width="442.0" height="77" rx="10"/>
+<text class="n-title" x="1200.0" y="759.0">arch-aware edits to existing commands</text>
+<text class="n-sub" x="1200.0" y="776.0">omarchy-refresh-pacman · omarchy-update-keyring</text>
+<text class="n-sub" x="1200.0" y="793.0">post-install/pacman.sh · hardware/{all,network,vulkan}.sh</text>
+</g>
+<g class="node tone-pending kind-box" tabindex="0" data-title="Apple Silicon machine running Asahi" data-sub="" data-paths="[]" data-note="">
+<title>Apple Silicon machine running Asahi</title>
+<rect x="1186.0" y="846" width="442.0" height="43" rx="10"/>
+<text class="n-title" x="1200.0" y="871.0">Apple Silicon machine running Asahi</text>
+</g>
+<text class="edge-label" x="854.0" y="153.0">packaged by</text>
+<text class="edge-label" x="1114.0" y="231.2">package lists feed the media</text>
+<text class="edge-label" x="594.0" y="483.0">offline mirror source</text>
+<text class="edge-label" x="854.0" y="541.8">pacman repository</text>
+<text class="edge-label" x="1114.0" y="734.5">installs</text>
+</svg>
+</div>
+<div class="panel idle" id="panel"><h2>Hover or tab a box to see the files behind it.</h2></div>
+<footer>Branches referenced: omacom/aarch64-default-packages, omacom/aarch64-host-pipeline, omacom/aarch64-iso, omacom/asahi-overlay. Hover or tab a box for its files.</footer>
+</main>
+<script>
+(function () {
+  var panel = document.getElementById('panel');
+  var idle = panel.innerHTML;
+  function esc(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function show(g) {
+    var paths = JSON.parse(g.getAttribute('data-paths') || '[]');
+    var sub = g.getAttribute('data-sub') || '';
+    var note = g.getAttribute('data-note') || '';
+    var h = '<h2>' + esc(g.getAttribute('data-title')) + '</h2>';
+    if (sub) h += '<p class="p-sub">' + esc(sub) + '</p>';
+    if (paths.length) h += '<ul>' + paths.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>';
+    if (note) h += '<p class="p-note">' + esc(note) + '</p>';
+    panel.className = 'panel';
+    panel.innerHTML = h;
+  }
+  function reset() { panel.className = 'panel idle'; panel.innerHTML = idle; }
+  document.querySelectorAll('g.node').forEach(function (g) {
+    g.addEventListener('pointerover', function () { show(g); });
+    g.addEventListener('focus', function () { show(g); });
+    g.addEventListener('blur', reset);
+  });
+  document.querySelector('.canvas').addEventListener('pointerleave', reset);
+})();
+</script>
+</body>
+</html>

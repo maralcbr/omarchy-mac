@@ -1,77 +1,60 @@
 # Apple Silicon release versioning
 
-Status: adopted 2026-09-01 (owner-chosen format)
+Status: revised 2026-09-04. The installer and the operating system it installs
+are now released on separate lines. See
+[`apple-silicon-distribution-channels.md`](apple-silicon-distribution-channels.md)
+for the channel layout and the runbooks.
+
 Scope: the Apple Silicon (`maralcbr/omarchy-mx-mac`) release lane only. The
-Linux/x86 release workflow (`.github/workflows/release.yml`) keeps its
-existing `vX.Y.Z-mac.N` tags and is unaffected.
+Linux/x86 workflow (`.github/workflows/release.yml`) keeps its existing
+`vX.Y.Z-mac.N` tags and is unaffected.
 
-## The scheme
+## Two identities
 
-Every Apple release is named by three components joined with dots:
-
-```
-v<omarchy version>.<installer number>.<package date MMDDYY>
-```
-
-| Component | Source of truth | Example | Moves when |
-| --- | --- | --- | --- |
-| omarchy version | the `version` file in this repo | `4.0.1-mac.2` | the Omarchy runtime/OS content changes |
-| installer number | the installer app's number (from app version `0.<n>.0`) | `9` | the macOS installer app or helper changes |
-| package date | build date of the OS payload, `MMDDYY` | `090126` | a new OS package is built |
-
-Current release identity:
-
-```
-v4.0.1-mac.2.9.090126
-```
-
-## Where each form appears
-
-| Surface | Value | Constraint honored |
+| | Value | Where it is set |
 | --- | --- | --- |
-| Release tag | `v4.0.1-mac.2.9.090126` | `publish-m1-release:49` tag regex |
-| Release title | `Omarchy MX Mac 4.0.1-mac.2.9.090126` | via the `--title` option in `publish-m1-release` |
-| `.pkg` filename | `Omarchy-MX-Mac-Installer-4.0.1-mac.2.9.090126.pkg` | none (name is caller-chosen) |
-| `.pkg --version` | `4.0.1-mac.2.9.090126` | `pkgbuild` accepts arbitrary strings |
-| App `CFBundleShortVersionString` | `4.0.1-mac.2.9.090126` (the composite passes `build-app.sh:37`'s regex) | verified: `4.0.1` + `-mac` + `.2` + `.9` + `.090126` |
-| App `CFBundleVersion` | integer counter, +1 every built app (currently 9, next 10) | `build-app.sh:39` requires a positive integer |
-| Catalog `sequence` | epoch seconds at catalog generation (unchanged) | on-device rollback guard: never decreases |
-| Catalog `engineVersion` | `v0.9.0-omarchy.N` (unchanged) | bound into the plan digest |
-| Catalog `evidenceRevision` | `4.0.1-mac.2.9.090126` | lowercase `[0-9a-z.-]` only — satisfied |
-| OS payload filename | `omarchy-2026.09.01-aarch64-apple-silicon-asahi-os-package.zip` (internal `YYYY.MM.DD` convention kept) | set in `builder/products/omarchy-mx-mac.json` in the ISO repo |
-| Release notes header | first line names the full identity | convention only |
+| Installer version | `2.0.0` | `CFBundleShortVersionString` via `OMARCHY_APP_VERSION`, and `pkgbuild --version` |
+| Installer build | integer, keeps counting (next `20`) | `CFBundleVersion` via `OMARCHY_APP_BUILD_NUMBER` |
+| Installer tag | `installer-v2.0.0` | git tag, matching `^installer-v[0-9]+\.[0-9]+\.[0-9]+$` |
+| OS release tag | `os-v4.0.2-mac.1.20260902[.N]` | git tag and the R2 prefix `releases/<tag>/` |
+| Catalog `evidenceRevision` | the OS tag without `os-v` | `evidence_revision` in the release inputs |
+| Catalog `sequence` | epoch seconds at generation | the generator; the only machine-enforced guard |
 
-## Monotonicity rules
+`v4.0.2-mac.1.19.090426` was the last composite tag. Nothing now requires the
+installer version and the Omarchy version to move together.
 
-1. **The catalog `sequence` is the only machine-enforced guard** and stays
-   epoch-seconds; every new signed catalog automatically satisfies the
-   on-device rollback check. The tag is a human label, not a guard — note
-   that `MMDDYY` does not sort naturally across years, which is fine because
-   nothing machine-compares tags.
-2. Each component must never move backwards in its own line: the omarchy
-   version follows the repo `version` file; the installer number counts up;
-   a later release must never reuse an earlier package date.
-3. Two releases must never share a tag. If the same omarchy+installer pair
-   ships a rebuilt payload the same day, suffix the date: `090126.2`.
-4. `CFBundleVersion` increments by one for every app build that leaves the
-   machine, independent of the composite.
+## Rules
 
-## Reconciled / remaining pins
+1. The catalog `sequence` is the only guard a machine enforces. It must
+   increase for every catalog published to a channel, and `os-promote` refuses
+   anything that does not exceed what the channel already serves.
+2. An installer version is immutable once published: `app-publish` refuses to
+   rewrite `installer/<version>/` with different bytes.
+3. Two releases never share a tag. A rebuilt OS payload on the same day gets a
+   suffix, as in `os-v4.0.2-mac.1.20260902.2`.
+4. `CFBundleVersion` increases by one for every app build that leaves the
+   machine, independent of the marketing version.
+5. `evidenceRevision` stays lowercase `[0-9a-z.-]`; the generator enforces it.
 
-Reconciled on 2026-09-01:
-- `Engine/source-lock.json` `full_os_payload` now names the `2026.09.01`
-  payload with its true size and digest (was: `08.29` name with the `08.31`
-  digest).
-- `Engine/installer_data.json` is a byte copy of the `2026.09.01` payload's
-  sidecar.
-- `scripts/make-unsigned-catalog.py` pins the `2026.09.01` payload and
-  `evidenceRevision 4.0.1-mac.2.9.090126`.
+## Where the per-release values live
 
-Resolved for v4.0.2-mac.1.14.090226 (engine `v0.9.0-omarchy.13` locked, `.14` shipped; `.12`/tag 1.13 never offered Replace because the ESP name is not a partition label; `.10`/tag 1.12 could not enumerate an existing stub created under the helper's private umask; `.9` and tag 1.11 shipped an engine whose executables lost python.org's entitlements and could not launch):
-1. `source-lock.json` was rekeyed to `v0.9.0-omarchy.8` with the replace and
-   repair overlay files and their tests; two clean builds reproduce it.
-2. The shipped `.9` comes from `scripts/resign-engine.sh` (the reusable form of
-   the `.6` → `.7` procedure): prune the GUI and static-link components, drop
-   dangling symlinks, re-sign every Mach-O (executables keep the entitlements in
-   `Engine/python-executable.entitlements.plist`), re-seal the Python framework.
-3. `Packaging/Info.plist` now carries the current version and build number.
+`apps/omarchy-apple-installer/scripts/release-inputs.template.json` holds the
+payload name, engine name and version, the Asahi revisions, the evidence
+revision, the supported device identifiers, and the installer compatibility
+block. The catalog generator reads that file, so cutting a release edits data,
+not code.
+
+The installer compatibility block is what lets a published catalog refuse an
+installer that is too old to install it safely:
+
+```json
+"installer": {
+  "minimum_version": "2.0.0",
+  "latest_version": "2.0.0",
+  "download_url": "https://downloads.aicodelabs.com.au/installer/stable/Omarchy-MX-Mac-Installer.pkg"
+}
+```
+
+An installer below `minimum_version` stops before downloading anything and
+offers that link. Raise `minimum_version` only when an older installer would
+genuinely mis-install the release.

@@ -24,6 +24,29 @@ Omarchy 4 (Quattro) is the maintained release:
 > qualification. Apple Silicon support still depends on the upstream Asahi
 > Linux support available for each model.
 
+## Download For Apple Silicon
+
+Download the installer, open it, then open **Omarchy MX Mac Installer** from
+your Applications folder. The link never changes and always serves the current
+installer:
+
+**[Download Omarchy MX Mac Installer](https://downloads.aicodelabs.com.au/installer/stable/Omarchy-MX-Mac-Installer.pkg)**
+
+The app fetches the current signed Omarchy release itself, so you do not need a
+new installer every time Omarchy is updated.
+
+Verify the download before opening it. Both commands must report an Apple
+Developer ID for `MARCELO DE BARROS ALCANTARA (T2C384FJBD)`:
+
+```bash
+pkgutil --check-signature ~/Downloads/"Omarchy MX Mac Installer.pkg"
+spctl -a -vv -t install ~/Downloads/"Omarchy MX Mac Installer.pkg"
+```
+
+> [!IMPORTANT]
+> Installers older than `2.0.0` were pinned to a single Omarchy release and
+> stop working on 2026-12-01. Replace them with the download above.
+
 ## Before You Begin
 
 - Back up macOS and important Linux data.

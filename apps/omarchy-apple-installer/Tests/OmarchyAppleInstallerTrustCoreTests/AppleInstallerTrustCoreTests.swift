@@ -331,6 +331,250 @@ final class AppleInstallerTrustCoreTests: XCTestCase {
     )
   }
 
+  // MARK: Schema 4 — no expiry
+
+  func testSchemaFourCatalogWithoutExpiryStaysValidFarInTheFuture() throws {
+    let fixture = try makeCatalog(
+      sequence: 40,
+      schemaVersion: 4,
+      includeExpiry: false
+    )
+
+    let validated = try core.validateSupportCatalog(
+      payload: fixture.payload,
+      signature: fixture.signature,
+      trustRoot: fixture.trustRoot,
+      now: now.addingTimeInterval(10 * 365 * 86_400)
+    )
+
+    XCTAssertEqual(validated.sequence, 40)
+  }
+
+  func testSchemaFourCatalogWithoutExpiryInstallsWhenTheClockIsBehind() throws {
+    let fixture = try makeCatalog(
+      sequence: 41,
+      schemaVersion: 4,
+      includeExpiry: false
+    )
+
+    let validated = try core.validateSupportCatalog(
+      payload: fixture.payload,
+      signature: fixture.signature,
+      trustRoot: fixture.trustRoot,
+      now: now.addingTimeInterval(-10 * 365 * 86_400)
+    )
+
+    XCTAssertEqual(validated.sequence, 41)
+  }
+
+  func testSchemaFourCatalogWithAnExpiryStillEnforcesIt() throws {
+    let fixture = try makeCatalog(
+      sequence: 42,
+      issuedAt: now.addingTimeInterval(-7_200),
+      expiresAt: now.addingTimeInterval(-3_600),
+      schemaVersion: 4
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual($0 as? SupportCatalogError, .expired)
+    }
+  }
+
+  func testLegacySchemaWithoutAnExpiryIsRejected() throws {
+    let fixture = try makeCatalog(
+      sequence: 43,
+      schemaVersion: 2,
+      includeExpiry: false
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual($0 as? SupportCatalogError, .invalidField("expiresAt"))
+    }
+  }
+
+  func testAnUnsupportedSchemaIsStillRejected() throws {
+    let fixture = try makeCatalog(
+      sequence: 44,
+      schemaVersion: 5,
+      includeExpiry: false
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual($0 as? SupportCatalogError, .unsupportedSchema(5))
+    }
+  }
+
+  // MARK: Installer compatibility block
+
+  func testInstallerCompatibilityIsAbsentByDefault() throws {
+    let fixture = try makeCatalog(sequence: 45)
+
+    let validated = try core.validateSupportCatalog(
+      payload: fixture.payload,
+      signature: fixture.signature,
+      trustRoot: fixture.trustRoot,
+      now: now
+    )
+
+    XCTAssertNil(validated.installerCompatibility)
+  }
+
+  func testInstallerCompatibilityIsExposedWhenPresent() throws {
+    let fixture = try makeCatalog(
+      sequence: 46,
+      schemaVersion: 4,
+      includeExpiry: false,
+      installer: installerBlock(minimum: "2.0.0", latest: "2.3.1")
+    )
+
+    let validated = try core.validateSupportCatalog(
+      payload: fixture.payload,
+      signature: fixture.signature,
+      trustRoot: fixture.trustRoot,
+      now: now
+    )
+
+    let compatibility = try XCTUnwrap(validated.installerCompatibility)
+    XCTAssertEqual(compatibility.minimumVersion, InstallerVersion("2.0.0"))
+    XCTAssertEqual(compatibility.latestVersion, InstallerVersion("2.3.1"))
+    XCTAssertEqual(
+      compatibility.downloadURL.absoluteString,
+      "https://downloads.example.com/installer/stable/Installer.pkg"
+    )
+    XCTAssertTrue(compatibility.accepts(InstallerVersion("2.0.0")!))
+    XCTAssertFalse(compatibility.accepts(InstallerVersion("1.9.9")!))
+  }
+
+  func testAMinimumNewerThanTheLatestIsRejected() throws {
+    let fixture = try makeCatalog(
+      sequence: 47,
+      schemaVersion: 4,
+      includeExpiry: false,
+      installer: installerBlock(minimum: "3.0.0", latest: "2.0.0")
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual(
+        $0 as? SupportCatalogError,
+        .invalidField("installer.minimumVersion")
+      )
+    }
+  }
+
+  func testAMalformedInstallerVersionIsRejected() throws {
+    let fixture = try makeCatalog(
+      sequence: 48,
+      schemaVersion: 4,
+      includeExpiry: false,
+      installer: installerBlock(minimum: "2.0", latest: "2.0.0")
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual(
+        $0 as? SupportCatalogError,
+        .invalidField("installer.minimumVersion")
+      )
+    }
+  }
+
+  func testAPlainHTTPInstallerDownloadURLIsRejected() throws {
+    let fixture = try makeCatalog(
+      sequence: 49,
+      schemaVersion: 4,
+      includeExpiry: false,
+      installer: installerBlock(
+        minimum: "2.0.0",
+        latest: "2.0.0",
+        downloadURL: "http://downloads.example.com/Installer.pkg"
+      )
+    )
+
+    XCTAssertThrowsError(
+      try core.validateSupportCatalog(
+        payload: fixture.payload,
+        signature: fixture.signature,
+        trustRoot: fixture.trustRoot,
+        now: now
+      )
+    ) {
+      XCTAssertEqual(
+        $0 as? SupportCatalogError,
+        .invalidField("installer.downloadURL")
+      )
+    }
+  }
+
+  func testAnUnknownTopLevelFieldIsIgnored() throws {
+    // The catalog is intentionally additive: an older verifier must keep
+    // working when a newer publisher adds a field it does not know.
+    let fixture = try makeCatalog(
+      sequence: 50,
+      schemaVersion: 4,
+      includeExpiry: false,
+      installer: installerBlock(minimum: "2.0.0", latest: "2.0.0")
+    )
+    var text = try XCTUnwrap(String(data: fixture.payload, encoding: .utf8))
+    text = text.replacingOccurrences(
+      of: "\"models\":",
+      with: "\"somethingNewer\":{\"a\":1},\"models\":"
+    )
+    let payload = Data(text.utf8)
+    let key = Curve25519.Signing.PrivateKey()
+    let publicKey = key.publicKey.rawRepresentation
+    let fingerprint =
+      "sha256:"
+      + SHA256.hash(data: publicKey)
+      .map { String(format: "%02x", $0) }
+      .joined()
+
+    let validated = try core.validateSupportCatalog(
+      payload: payload,
+      signature: try key.signature(for: payload),
+      trustRoot: try AppOwnedTrustRoot(
+        rawRepresentation: publicKey,
+        expectedFingerprint: fingerprint
+      ),
+      now: now
+    )
+
+    XCTAssertEqual(validated.sequence, 50)
+  }
+
   func testCatalogRejectsExpiredManifest() throws {
     let fixture = try makeCatalog(
       sequence: 9,
@@ -577,7 +821,10 @@ final class AppleInstallerTrustCoreTests: XCTestCase {
     sequence: UInt64,
     evidence: String = "evidence-1",
     issuedAt: Date? = nil,
-    expiresAt: Date? = nil
+    expiresAt: Date? = nil,
+    schemaVersion: Int = 1,
+    includeExpiry: Bool = true,
+    installer: String? = nil
   ) throws -> CatalogFixture {
     let privateKey = Curve25519.Signing.PrivateKey()
     let issued = ISO8601DateFormatter().string(
@@ -590,17 +837,21 @@ final class AppleInstallerTrustCoreTests: XCTestCase {
       catalogModel(
         deviceIdentifier: "apple,j314s",
         status: "enabled",
-        evidence: evidence
+        evidence: evidence,
+        withDelivery: schemaVersion >= 2
       ),
       catalogModel(
         deviceIdentifier: "apple,j614s",
         status: "disabled",
-        evidence: evidence
+        evidence: evidence,
+        withDelivery: schemaVersion >= 2
       ),
     ].joined(separator: ",")
+    let expiryField = includeExpiry ? ",\"expiresAt\":\"\(expires)\"" : ""
+    let installerField = installer.map { ",\"installer\":\($0)" } ?? ""
     let payload = Data(
       """
-      {"schemaVersion":1,"sequence":\(sequence),"issuedAt":"\(issued)","expiresAt":"\(expires)","models":[\(models)]}
+      {"schemaVersion":\(schemaVersion),"sequence":\(sequence),"issuedAt":"\(issued)"\(expiryField)\(installerField),"models":[\(models)]}
       """.utf8
     )
     let publicKey = privateKey.publicKey.rawRepresentation
@@ -619,14 +870,29 @@ final class AppleInstallerTrustCoreTests: XCTestCase {
     )
   }
 
+  private func installerBlock(
+    minimum: String,
+    latest: String,
+    downloadURL: String = "https://downloads.example.com/installer/stable/Installer.pkg"
+  ) -> String {
+    """
+    {"minimumVersion":"\(minimum)","latestVersion":"\(latest)","downloadURL":"\(downloadURL)"}
+    """
+  }
+
   private func catalogModel(
     deviceIdentifier: String,
     status: String,
-    evidence: String
+    evidence: String,
+    withDelivery: Bool = false
   ) -> String {
-    """
-    {"deviceIdentifier":"\(deviceIdentifier)","status":"\(status)","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"sha256:\(String(repeating: "d", count: 64))","metadataDigest":"sha256:\(String(repeating: "e", count: 64))","payloadDigest":"sha256:\(String(repeating: "f", count: 64))","evidenceRevision":"\(evidence)"}
-    """
+    let delivery =
+      withDelivery
+      ? #","engineVersion":"v0.9.0-omarchy.14","engineArtifact":{"sourceURL":"https://downloads.example.com/engine.tar.gz","fileName":"engine.tar.gz","sizeBytes":1},"metadataArtifact":{"sourceURL":"https://downloads.example.com/metadata.json","fileName":"metadata.json","sizeBytes":1},"payloadArtifact":{"sourceURL":"https://downloads.example.com/payload.zip","fileName":"payload.zip","sizeBytes":1}"#
+      : ""
+    return """
+      {"deviceIdentifier":"\(deviceIdentifier)","status":"\(status)","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"sha256:\(String(repeating: "d", count: 64))","metadataDigest":"sha256:\(String(repeating: "e", count: 64))","payloadDigest":"sha256:\(String(repeating: "f", count: 64))","evidenceRevision":"\(evidence)"\(delivery)}
+      """
   }
 
   private func makeTranscript(

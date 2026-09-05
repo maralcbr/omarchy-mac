@@ -119,7 +119,12 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     let configuration = try InstallerReleaseConfigurationLocator()
       .loadFromMainBundle()
     let workspace = try installerWorkspace()
-    let catalogStore = AcceptedCatalogIdentityStore(directory: workspace.state)
+    let channel = ReleaseChannelPreference()
+      .resolve(descriptorDefault: configuration.defaultChannel)
+    let catalogStore = AcceptedCatalogIdentityStore(
+      directory: workspace.state,
+      channel: channel
+    )
     let previouslyAcceptedCatalog = try catalogStore.load()
     let validationTime = Date()
 
@@ -129,8 +134,10 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
         InstallerReleasePreparationRequest(
           host: host,
           configuration: configuration,
+          channel: channel,
           validationTime: validationTime,
           previouslyAcceptedCatalog: previouslyAcceptedCatalog,
+          installerVersion: InstallerVersion.current(),
           stagingDirectory: workspace.staging
         ),
         progress: { event in

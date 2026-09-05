@@ -11,18 +11,43 @@
   }
 
   public struct AcceptedCatalogIdentityStore: Sendable {
-    public static let fileName = "accepted-catalog.json"
+    /// The pre-channel state file. It always described the stable channel, so
+    /// stable still reads it once and then supersedes it.
+    public static let legacyFileName = "accepted-catalog.json"
     private static let maximumBytes: Int64 = 4_096
 
     private let directory: URL
+    private let channel: ReleaseChannel
 
-    public init(directory: URL) {
+    public init(directory: URL, channel: ReleaseChannel) {
       self.directory = directory
+      self.channel = channel
+    }
+
+    /// Each channel keeps its own accepted sequence. Without this, a tester who
+    /// accepted a rc catalog could never go back to stable: the older stable
+    /// sequence would look like a rollback.
+    public static func fileName(for channel: ReleaseChannel) -> String {
+      "accepted-catalog-\(channel.rawValue).json"
+    }
+
+    private var fileName: String {
+      Self.fileName(for: channel)
     }
 
     public func load() throws -> AcceptedCatalogIdentity? {
       try validateDirectory()
-      let stateURL = directory.appendingPathComponent(Self.fileName)
+      if let identity = try read(fileName: fileName) {
+        return identity
+      }
+      guard channel == .stable else {
+        return nil
+      }
+      return try read(fileName: Self.legacyFileName)
+    }
+
+    private func read(fileName: String) throws -> AcceptedCatalogIdentity? {
+      let stateURL = directory.appendingPathComponent(fileName)
       let descriptor = Darwin.open(
         stateURL.path,
         O_RDONLY | O_CLOEXEC | O_NOFOLLOW
@@ -99,7 +124,7 @@
       }
 
       let pending = directory.appendingPathComponent(
-        ".accepted-catalog-\(UUID().uuidString.lowercased()).tmp"
+        ".accepted-catalog-\(channel.rawValue)-\(UUID().uuidString.lowercased()).tmp"
       )
       let descriptor = Darwin.open(
         pending.path,
@@ -130,11 +155,18 @@
         throw AcceptedCatalogIdentityStoreError.writeFailed
       }
 
-      let destination = directory.appendingPathComponent(Self.fileName)
+      let destination = directory.appendingPathComponent(fileName)
       guard Darwin.rename(pending.path, destination.path) == 0 else {
         throw AcceptedCatalogIdentityStoreError.writeFailed
       }
       try synchronizeDirectory()
+      if channel == .stable {
+        // The channel file now carries what the legacy file said, so retire it
+        // rather than leave two records that can disagree.
+        try? FileManager.default.removeItem(
+          at: directory.appendingPathComponent(Self.legacyFileName)
+        )
+      }
     }
 
     private func validateDirectory() throws {

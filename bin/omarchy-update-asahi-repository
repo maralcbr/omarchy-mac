@@ -89,16 +89,29 @@ verify_signature() {
 # descriptor is the candidate's CANDIDATE file, and the stable tag carries the
 # same source commit. Draft, prerelease, and mutable releases are not stable.
 releases_api_url="${OMARCHY_ASAHI_RELEASES_API_URL:-https://api.github.com/repos/$repo/releases?per_page=100}"
-download "$releases_api_url" "$workdir/releases.json"
-tag=$(jq -er '
-  [
-    .[]
-    | select(.draft == false and .prerelease == false and .immutable == true)
-    | select(.tag_name | test("^asahi-packages-stable-[0-9a-f]{40}$"))
-    | select(.published_at | type == "string")
-  ]
-  | max_by(.published_at).tag_name
-' "$workdir/releases.json" 2>/dev/null) || fail "could not discover a promoted Apple Silicon package snapshot"
+
+# The API returns releases newest first, so the newest promoted snapshot is on
+# the first page that holds any match at all. Candidate, channel and snapshot
+# tags accumulate quickly, though, so keep paging while a page is full and has
+# no match rather than reporting no snapshot at all.
+tag=""
+for page in 1 2 3 4 5; do
+  page_url=$releases_api_url
+  (( page > 1 )) && page_url="$releases_api_url&page=$page"
+  download "$page_url" "$workdir/releases.json"
+  tag=$(jq -er '
+    [
+      .[]
+      | select(.draft == false and .prerelease == false and .immutable == true)
+      | select(.tag_name | test("^asahi-packages-stable-[0-9a-f]{40}$"))
+      | select(.published_at | type == "string")
+    ]
+    | max_by(.published_at).tag_name
+  ' "$workdir/releases.json" 2>/dev/null) && [[ -n $tag ]] && break
+  tag=""
+  (( $(jq -r 'length' "$workdir/releases.json" 2>/dev/null || echo 0) == 100 )) || break
+done
+[[ -n $tag ]] || fail "could not discover a promoted Apple Silicon package snapshot"
 [[ $tag =~ ^asahi-packages-stable-([0-9a-f]{40})$ ]] || fail "invalid stable release tag"
 source_commit=${BASH_REMATCH[1]}
 server="https://github.com/$repo/releases/download/$tag"
