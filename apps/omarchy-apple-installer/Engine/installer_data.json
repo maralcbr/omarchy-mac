@@ -7,7 +7,7 @@
       "name": "Omarchy MX Mac",
       "next_object": "m1n1/boot.bin",
       "omarchy_target": "apple-silicon-full-os",
-      "package": "omarchy-2026.09.02-aarch64-apple-silicon-asahi-os-package.zip",
+      "package": "omarchy-2026.09.05-aarch64-apple-silicon-asahi-os-package.zip",
       "partitions": [
         {
           "copy_firmware": true,
