@@ -21,8 +21,14 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
     true
   }
 
-  #if DEBUG
-    func applicationDidFinishLaunching(_ notification: Notification) {
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    // The install ends with a shutdown the app itself requests. macOS would
+    // otherwise treat it as an app open at shutdown and bring it back at the
+    // next login, so someone rebooting from Omarchy into macOS met the
+    // installer again. Opt out for good.
+    NSApp.disableRelaunchOnLogin()
+
+    #if DEBUG
       // A bare SwiftPM executable has no Info.plist, so Launch Services
       // registers it background-only and the window never appears. Promote
       // unbundled debug runs to a regular, frontmost app; the packaged app
@@ -31,8 +37,8 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
       }
-    }
-  #endif
+    #endif
+  }
 }
 
 @main
