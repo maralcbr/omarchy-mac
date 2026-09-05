@@ -40,6 +40,14 @@ EOF
     chmod --reference="$pacman_conf" "$tmp"
     chown --reference="$pacman_conf" "$tmp"
     mv "$tmp" "$pacman_conf"
+    # A GitHub release serves every tag's database under the same name
+    # (omarchy.db), and their upload times are not ordered by tag, so when the
+    # repository is repointed to a tag whose asset is older than the cached one
+    # pacman keeps the stale database while fetching the new tag's signature and
+    # rejects the pair as an invalid signature. Drop the cached database so it
+    # and its signature are always fetched together for the tag now pinned.
+    db_path=$(awk -F= '/^[[:space:]]*DBPath[[:space:]]*=/ { gsub(/[[:space:]]/, "", $2); print $2 }' "$pacman_conf")
+    rm -f "${db_path:-/var/lib/pacman}/sync/omarchy.db" "${db_path:-/var/lib/pacman}/sync/omarchy.db.sig"
     pacman -Sy --noconfirm
   fi
 fi

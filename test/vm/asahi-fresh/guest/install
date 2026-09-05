@@ -242,7 +242,19 @@ use_candidate_repository() {
   } >/tmp/pacman.conf.candidate
   install -m 0644 /tmp/pacman.conf.candidate /etc/pacman.conf
   pacman -Sy
-  touch -d '2000-01-01T00:00:00Z' "$sync_dir/omarchy.db" "$sync_dir/omarchy.db.sig" 2>/dev/null || true
+
+  # omarchy-apply-system repoints [omarchy] back to the shipped release and runs
+  # `pacman -Sy`. The database just primed above is the candidate's, newer on
+  # GitHub than the release's, so that sync would keep it under If-Modified-Since
+  # and reject it against the release's signature. Runtimes that carry the
+  # install/hardware/pacman.sh cache drop fix handle this themselves; older
+  # packaged runtimes under test here do not, so add it to the packaged copy the
+  # guest will run. Idempotent: skipped once the fix is present.
+  local packaged=/usr/share/omarchy/install/hardware/pacman.sh
+  if [[ -f $packaged ]] && ! grep -q 'sync/omarchy.db' "$packaged"; then
+    [[ -f $work/packaged-pacman.sh.orig ]] || cp -a "$packaged" "$work/packaged-pacman.sh.orig"
+    sed -i 's#^\([[:space:]]*\)pacman -Sy --noconfirm#\1rm -f /var/lib/pacman/sync/omarchy.db /var/lib/pacman/sync/omarchy.db.sig\n\1pacman -Sy --noconfirm#' "$packaged"
+  fi
 }
 
 use_candidate_repository
@@ -337,6 +349,10 @@ rm -f /usr/local/bin/usermod
 pacman -Q linux-asahi linux-asahi-headers m1n1 >protected-packages.after
 cmp protected-packages.before protected-packages.after
 cp --preserve=all omarchy-hw-apple-silicon.original /usr/share/omarchy/bin/omarchy-hw-apple-silicon
+# Undo the packaged pin-writer patch (added above so the guest's older runtime
+# drops its cached database) so package file verification sees it as shipped.
+[[ -f $work/packaged-pacman.sh.orig ]] &&
+  cp --preserve=all "$work/packaged-pacman.sh.orig" /usr/share/omarchy/install/hardware/pacman.sh
 cmp vm-kernel.before /boot/Image
 cmp asahi-kernel.before /boot/vmlinuz-linux-asahi
 cmp vm-grub.before /boot/grub/grub.cfg

@@ -50,19 +50,27 @@ exit 0
 SH
 chmod +x "$mock_bin"/*
 
-cat >"$pacman_conf" <<'CONF'
+db_path="$test_tmp/pacman-db"
+mkdir -p "$db_path/sync"
+# A database left by a previously pinned tag. Repointing the repository must
+# drop it, or pacman keeps it and rejects it against the new tag's signature.
+printf 'stale-candidate-database' >"$db_path/sync/omarchy.db"
+printf 'stale-signature' >"$db_path/sync/omarchy.db.sig"
+
+cat >"$pacman_conf" <<CONF
 [options]
 Architecture = aarch64
+DBPath = $db_path
 
 [asahi-alarm]
-Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/$arch
+Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/\$arch
 
 [omarchy]
 SigLevel = Never
-Server = https://pkgs.omarchy.org/edge/$arch
+Server = https://pkgs.omarchy.org/edge/\$arch
 
 [core]
-Server = http://mirror.archlinuxarm.org/$arch/$repo
+Server = http://mirror.archlinuxarm.org/\$arch/\$repo
 CONF
 
 run_leaf() {
@@ -86,7 +94,17 @@ grep -Fq 'mirror.archlinuxarm.org' "$pacman_conf" || fail "Apple package setup p
 grep -Fxq "pacman-key:--add $key_file" "$calls" || fail "Apple package setup imports the pinned release key"
 grep -Fxq 'pacman-key:--lsign-key 5983B1CA32CB778F4D74D24ECFF35022CA5B5959' "$calls" || fail "Apple package setup trusts the pinned release key"
 grep -Fxq 'pacman:-Sy --noconfirm' "$calls" || fail "Apple package setup refreshes the new repository"
+[[ ! -e $db_path/sync/omarchy.db && ! -e $db_path/sync/omarchy.db.sig ]] ||
+  fail "Apple package setup keeps a database cached under the old pin"
 pass "Apple Silicon receives the signed immutable package repository"
+
+# The cached database is dropped only when the repository is actually repointed;
+# an unchanged pin leaves the cache alone.
+printf 'fresh-database' >"$db_path/sync/omarchy.db"
+run_leaf 0
+[[ -e $db_path/sync/omarchy.db ]] ||
+  fail "Apple package setup clears the database cache when nothing changed"
+pass "the database cache is cleared only on a repointed repository"
 
 config_hash=$(sha256sum "$pacman_conf")
 sync_count=$(grep -Fc 'pacman:-Sy --noconfirm' "$calls")
