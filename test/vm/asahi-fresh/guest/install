@@ -209,6 +209,17 @@ use_candidate_repository() {
   # The same goes for the Arch Linux ARM mirrors: whatever wrote pacman.conf
   # since the last run wrote the live ones.
   bash /root/omarchy-vm-alarm-snapshot
+  # A GitHub release serves every tag's database under one name (omarchy.db) and
+  # their upload times are not ordered by tag, so pacman's If-Modified-Since
+  # cache keeps whichever database it fetched last whenever the newly pinned
+  # tag's asset is older. Production never sees this because the pin only moves
+  # forward, but this harness alternates between the candidate and the shipped
+  # release. Drop the cached database before syncing the candidate, and age the
+  # result so the installer's own sync -- omarchy-apply-system repoints the
+  # repository back to the shipped release -- refetches the database that
+  # matches the tag pinned then instead of pairing it with the wrong signature.
+  local sync_dir=/var/lib/pacman/sync
+  rm -f "$sync_dir/omarchy.db" "$sync_dir/omarchy.db.sig"
   [[ -r /root/omarchy-arm-repository.asc && -f /var/lib/omarchy/vm-package-candidate ]] || return 0
   local candidate_tag candidate_primary
   candidate_tag=$(sed -n 's/^release_tag=//p' /var/lib/omarchy/vm-package-candidate)
@@ -231,6 +242,7 @@ use_candidate_repository() {
   } >/tmp/pacman.conf.candidate
   install -m 0644 /tmp/pacman.conf.candidate /etc/pacman.conf
   pacman -Sy
+  touch -d '2000-01-01T00:00:00Z' "$sync_dir/omarchy.db" "$sync_dir/omarchy.db.sig" 2>/dev/null || true
 }
 
 use_candidate_repository

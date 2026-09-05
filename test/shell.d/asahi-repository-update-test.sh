@@ -29,7 +29,7 @@ grep -Fq '# omarchy:hidden=true' "$updater" || fail "repository updater is hidde
 grep -Fq '# omarchy:requires-sudo=true' "$updater" || fail "repository updater declares its sudo requirement"
 grep -Fq 'omarchy-update-asahi-repository --yes' "$update" || fail "normal updates repoint the Apple Silicon package repository"
 grep -Fq 'repository_status == 3' "$update" || fail "repository listing outages do not block platform package updates"
-awk '/omarchy-update-asahi-repository --yes/ { seen = 1 } seen && /omarchy-update-system-pkgs$/ { ordered = 1 } END { exit !ordered }' "$update" ||
+awk '/omarchy-update-asahi-repository --yes/ { seen = 1 } seen && /omarchy-update-system-pkgs([^-]|$)/ { ordered = 1 } END { exit !ordered }' "$update" ||
   fail "the repository is repointed before the system package upgrade"
 grep -Fq 'omarchy-update-asahi-repository' "$update_available" || fail "availability checks include the package repository"
 # A failed repoint leaves the previous signed snapshot pinned, which still
