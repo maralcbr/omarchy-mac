@@ -39,7 +39,7 @@ printf '%s unattended=%s\n' "${0##*/}" "${OMARCHY_UPDATE_UNATTENDED:-}" >>"$STEP
 if [[ ${CLEANUP_FAIL:-0} == "1" && ${0##*/} == "omarchy-update-stay-awake" && ${1:-} == "stop" ]]; then
   exit 7
 fi
-[[ ${FAILING_STEP:-} != "${0##*/}" ]] || exit 42
+[[ ${FAILING_STEP:-} != "${0##*/}" ]] || exit "${FAILING_STATUS:-42}"
 STUB
   chmod +x "$stub_bin/$step"
 done
@@ -56,6 +56,7 @@ run_update() {
   : >"$test_tmp/steps"
   STEP_LOG="$test_tmp/steps" \
     FAILING_STEP="${FAILING_STEP:-}" \
+    FAILING_STATUS="${FAILING_STATUS:-}" \
     CLEANUP_FAIL="${CLEANUP_FAIL:-0}" \
     OMARCHY_UPDATE_LOGGED=1 \
     PATH="$stub_bin:$PATH" \
@@ -124,3 +125,27 @@ set -e
 [[ $update_status -eq 42 ]] ||
   fail "cleanup failure replaces the original update status" "expected 42, got $update_status"
 pass "cleanup failure preserves the original update status"
+
+# A package upgrade the repositories themselves refuse (status 3) has already
+# told the person to try again later; the generic failure banner on top of that
+# would send them looking for an error to correct that is not theirs.
+set +e
+FAILING_STEP=omarchy-update-system-pkgs FAILING_STATUS=3 run_update -y
+update_status=$?
+set -e
+[[ $update_status -eq 3 ]] ||
+  fail "a repository mid-transition does not keep its status" "expected 3, got $update_status"
+if grep -q 'Something went wrong' "$test_tmp/err" "$test_tmp/out"; then
+  fail "a repository mid-transition is reported as something to correct"
+fi
+if grep -q '^omarchy-migrate ' "$test_tmp/steps"; then
+  fail "a repository mid-transition still migrates"
+fi
+pass "a repository mid-transition stops the update without the failure banner"
+
+set +e
+FAILING_STEP=omarchy-update-system-pkgs run_update -y
+set -e
+grep -q 'Something went wrong' "$test_tmp/out" "$test_tmp/err" ||
+  fail "any other blocked upgrade lost the failure banner"
+pass "every other blocked upgrade still shows the failure banner"

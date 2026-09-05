@@ -34,6 +34,20 @@ if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm \
 fi
 cat "$errors" >&2
 
+# A repository mid-transition -- one package already rebuilt against a new
+# library, the packages that need it not yet -- is refused by pacman before it
+# installs anything, and that refusal is right: the partial upgrade would not
+# boot. Nothing here can fix it and nothing was changed, so say that instead of
+# handing it to the conflict handler as if it were ours.
+if grep -qE 'unable to satisfy dependency|breaks dependency' "$errors"; then
+  if omarchy-hw-apple-silicon; then
+    echo -e "\e[33m\nThe Arch Linux ARM repositories are mid-update, so this upgrade cannot go through yet. Nothing on this Mac was changed. Try again later.\e[0m" >&2
+  else
+    echo -e "\e[33m\nThe Arch Linux repositories are mid-update, so this upgrade cannot go through yet. Nothing on this computer was changed. Try again later.\e[0m" >&2
+  fi
+  exit 3
+fi
+
 # The handler takes it from here: it clears files pacman doesn't own yet and
 # runs this again, and puts a package conflict to whoever started the update.
 # Anything else, including a second failure, is for a human.

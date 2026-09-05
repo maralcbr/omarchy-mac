@@ -78,7 +78,12 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
   # Migrations ship with the packages installed here and are written against
   # them, so everything below waits on this finishing. An upgrade that stopped
   # takes the update with it rather than migrating against what is still on disk.
-  omarchy-update-system-pkgs
+  # 3 is a repository mid-transition: the step has already said to try again
+  # later, and the failure banner would contradict it.
+  packages_status=0
+  omarchy-update-system-pkgs || packages_status=$?
+  if (( packages_status == 3 )); then trap - ERR; fi
+  (( packages_status == 0 )) || (exit "$packages_status")
   omarchy-migrate
   omarchy-hook post-update
   if omarchy-hw-apple-silicon && [[ -f /var/lib/omarchy/asahi-quattro-release.pending ]]; then
