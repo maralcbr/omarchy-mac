@@ -28,6 +28,8 @@ alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mir
   echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL ending in /$repo/os/$arch' >&2
   exit 1
 }
+# ssh hands the command to the guest's shell, which would expand $repo/$arch.
+alarm_mirror_quoted=$(printf '%q' "$alarm_mirror")
 [[ $vm_memory_mb =~ ^[1-9][0-9]*$ ]] || {
   echo "OMARCHY_VM_MEMORY_MB must be a positive integer" >&2
   exit 1
@@ -142,7 +144,7 @@ wait_for_reboot() {
 
 wait_for_ssh || { tail -200 "$state/run/serial.log"; exit 1; }
 scp "${scp_args[@]}" "$harness/guest/alarm-snapshot" root@127.0.0.1:/root/omarchy-vm-alarm-snapshot
-ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-alarm-snapshot
+ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" bash /root/omarchy-vm-alarm-snapshot
 if [[ -n $candidate_tag ]]; then
   scp "${scp_args[@]}" "$candidate_key" root@127.0.0.1:/root/omarchy-arm-repository.asc
   scp "${scp_args[@]}" "$harness/guest/candidate-repository" root@127.0.0.1:/root/omarchy-vm-candidate-repository
@@ -159,7 +161,7 @@ scp "${scp_args[@]}" "$root/bin/omarchy-update-asahi-bundle" root@127.0.0.1:/roo
 scp "${scp_args[@]}" "$harness/guest/install" root@127.0.0.1:/root/omarchy-vm-install
 stable_version=$(<"$root/version")
 ssh -tt "${ssh_args[@]}" root@127.0.0.1 \
-  env OMARCHY_VM_STABLE_VERSION="$stable_version" OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-install |
+  env OMARCHY_VM_STABLE_VERSION="$stable_version" OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" bash /root/omarchy-vm-install |
   tee "$state/run/install.log" || exit 1
 
 boot_id=$(ssh "${ssh_args[@]}" root@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
@@ -180,7 +182,7 @@ if (( optional_packages )); then
     root@127.0.0.1:/root/omarchy-vm-optional-packages
 
   optional_status=0
-  ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror" bash /root/omarchy-vm-optional-packages |
+  ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" bash /root/omarchy-vm-optional-packages |
     tee "$state/run/optional-packages.log" || optional_status=$?
   scp -r "${scp_args[@]}" root@127.0.0.1:/root/optional-package-logs "$state/run/"
   (( optional_status == 0 )) || exit "$optional_status"
