@@ -19,4 +19,5 @@ for file in /etc/pacman.d/mirrorlist /etc/pacman.conf; do
   [[ -f $file ]] || continue
   sed -i "s|$live|Server = $mirror|" "$file"
 done
-! grep -rq 'mirror\.archlinuxarm\.org' /etc/pacman.conf /etc/pacman.d/mirrorlist
+# Every Arch Linux ARM server left must be the chosen one, whichever host that is.
+! cat /etc/pacman.conf /etc/pacman.d/mirrorlist 2>/dev/null | grep -E '^Server = .*archlinuxarm\.org' | grep -vxF "Server = $mirror" | grep -q .
