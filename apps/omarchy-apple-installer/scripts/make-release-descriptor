@@ -69,11 +69,14 @@ import sys
 
 output, fingerprint, base_url, default_channel, helper, requirement = sys.argv[1:7]
 descriptor = {
-    "schema_version": 2,
+    "schema_version": 3,
     "default_channel": default_channel,
     "channels": {
         "stable": {"catalog_url": f"{base_url}/channels/stable/catalog.signed.json"},
         "rc": {"catalog_url": f"{base_url}/channels/rc/catalog.signed.json"},
+        "rc-aurora": {
+            "catalog_url": f"{base_url}/channels/rc-aurora/catalog.signed.json"
+        },
     },
     "trust_root_fingerprint": fingerprint,
     "helper_mach_service_name": helper,

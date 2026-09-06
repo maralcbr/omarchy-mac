@@ -46,8 +46,8 @@ struct OmarchyAppleInstallerApp: App {
   @NSApplicationDelegateAdaptor(InstallerApplicationDelegate.self)
   private var applicationDelegate
 
-  /// Testers switch to the rc channel here. The choice only picks between the
-  /// two URLs already signed into this build; changing it restarts the check so
+  /// Testers switch to a pre-release channel here. The choice only picks among
+  /// the URLs already signed into this build; changing it restarts the check so
   /// nothing planned against one channel is installed from the other.
   @State private var channel: ReleaseChannel = ReleaseChannelPreference()
     .resolve(descriptorDefault: .stable)
@@ -72,6 +72,7 @@ struct OmarchyAppleInstallerApp: App {
         Picker(PlainLanguage.channelMenuTitle, selection: channelBinding) {
           Text(PlainLanguage.channelStable).tag(ReleaseChannel.stable)
           Text(PlainLanguage.channelRC).tag(ReleaseChannel.rc)
+          Text(PlainLanguage.channelRCAurora).tag(ReleaseChannel.rcAurora)
         }
         .pickerStyle(.inline)
       }
