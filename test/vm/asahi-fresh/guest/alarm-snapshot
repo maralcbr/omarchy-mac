@@ -9,8 +9,8 @@
 set -euo pipefail
 
 mirror=${OMARCHY_VM_ALARM_MIRROR:?OMARCHY_VM_ALARM_MIRROR is not set}
-[[ $mirror == https://*'/$repo/os/$arch' ]] || {
-  echo "OMARCHY_VM_ALARM_MIRROR must be an https URL ending in /\$repo/os/\$arch" >&2
+[[ $mirror == https://* && $mirror == *'$repo'* && $mirror == *'$arch'* ]] || {
+  echo "OMARCHY_VM_ALARM_MIRROR must be an https URL containing \$repo and \$arch" >&2
   exit 1
 }
 

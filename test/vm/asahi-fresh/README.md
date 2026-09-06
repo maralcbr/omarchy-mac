@@ -32,8 +32,8 @@ The guest takes its Arch Linux ARM packages from a dated, immutable copy of the
 live mirrors, so a mirror caught mid-transition (one package rebuilt against a
 new library, its dependents not yet) cannot fail a run that has nothing to do
 with it. The default is the snapshot the current payload was built against;
-`OMARCHY_VM_ALARM_MIRROR` overrides it with another `https://…/$repo/os/$arch`
-URL. Only the signed base rootfs still comes from a live mirror. See
+`OMARCHY_VM_ALARM_MIRROR` overrides it with another mirror URL (any `https://`
+URL naming `$repo` and `$arch`, so a live Arch Linux ARM mirror works too). Only the signed base rootfs still comes from a live mirror. See
 `docs/apple-silicon-distribution-channels.md`, "The Arch Linux ARM snapshot".
 
 Use `--rebuild-base` to discard the cached Arch Linux ARM base and `--keep` to

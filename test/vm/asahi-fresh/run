@@ -24,8 +24,8 @@ candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$root/default/omarchy-arm-reposit
 # payload was built against; see docs/apple-silicon-distribution-channels.md.
 alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260905/$repo/os/$arch'}
 
-[[ $alarm_mirror == https://*'/$repo/os/$arch' ]] || {
-  echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL ending in /$repo/os/$arch' >&2
+[[ $alarm_mirror == https://* && $alarm_mirror == *'$repo'* && $alarm_mirror == *'$arch'* ]] || {
+  echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL containing $repo and $arch' >&2
   exit 1
 }
 # ssh hands the command to the guest's shell, which would expand $repo/$arch.
