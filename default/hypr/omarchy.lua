@@ -16,6 +16,8 @@ end
 require("default.hypr.envs")
 require("default.hypr.looknfeel")
 require("default.hypr.input")
+-- Hardware-specific rendering.
+require("default.hypr.apple")
 require("default.hypr.windows")
 
 -- Current theme overrides.
