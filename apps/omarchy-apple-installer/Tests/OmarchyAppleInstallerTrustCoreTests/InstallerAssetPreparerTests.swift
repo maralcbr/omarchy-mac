@@ -398,7 +398,13 @@
         rcURL: envelope,
       ])
       let releaseConfiguration = InstallerReleaseConfiguration(
-        channels: ReleaseChannelEndpoints(stable: stableURL, rc: rcURL),
+        channels: ReleaseChannelEndpoints(endpoints: [
+          .stable: stableURL,
+          .rc: rcURL,
+          .rcAurora: URL(
+            string: "https://releases.example.com/channels/rc-aurora/catalog.signed.json"
+          )!,
+        ])!,
         defaultChannel: .stable,
         trustRoot: trustRoot,
         helperMachServiceName: "com.omarchy.apple-installer.helper",

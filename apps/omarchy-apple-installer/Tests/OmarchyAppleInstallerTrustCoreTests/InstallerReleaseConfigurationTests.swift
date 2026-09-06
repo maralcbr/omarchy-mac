@@ -30,6 +30,51 @@
       )
     }
 
+    func testTheAuroraChannelResolvesItsOwnCatalog() throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      let configuration = try InstallerReleaseConfigurationLoader().load(
+        descriptor: descriptor(fingerprint: digest(key)),
+        trustRootPublicKey: key
+      )
+
+      // The Aurora payload is a different OS image, so a tester who picks it
+      // must be reading a catalog no other channel points at.
+      XCTAssertEqual(
+        configuration.catalogURL(for: .rcAurora).absoluteString,
+        "https://releases.omarchy.example/channels/rc-aurora/catalog.signed.json"
+      )
+      XCTAssertNotEqual(
+        configuration.catalogURL(for: .rcAurora),
+        configuration.catalogURL(for: .rc)
+      )
+      XCTAssertNotEqual(
+        configuration.catalogURL(for: .rcAurora),
+        configuration.catalogURL(for: .stable)
+      )
+      XCTAssertEqual(ReleaseChannel(rawValue: "rc-aurora"), .rcAurora)
+    }
+
+    func testSchemaTwoDescriptorIsRejected() throws {
+      let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+      let twoChannel = Data(
+        """
+        {"schema_version":2,"default_channel":"stable","channels":{"stable":{"catalog_url":"https://releases.omarchy.example/channels/stable/catalog.signed.json"},"rc":{"catalog_url":"https://releases.omarchy.example/channels/rc/catalog.signed.json"}},"trust_root_fingerprint":"\(digest(key))","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
+        """.utf8
+      )
+
+      XCTAssertThrowsError(
+        try InstallerReleaseConfigurationLoader().load(
+          descriptor: twoChannel,
+          trustRootPublicKey: key
+        )
+      ) {
+        XCTAssertEqual(
+          $0 as? InstallerReleaseConfigurationError,
+          .unsupportedSchema(2)
+        )
+      }
+    }
+
     func testSchemaOneDescriptorIsRejected() throws {
       let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
       let legacy = Data(
@@ -54,7 +99,8 @@
     func testDescriptorsMissingAChannelFailClosed() throws {
       try assertDescriptorRejected { value in
         value["channels"] = [
-          "stable": ["catalog_url": "https://releases.omarchy.example/s.json"]
+          "stable": ["catalog_url": "https://releases.omarchy.example/s.json"],
+          "rc": ["catalog_url": "https://releases.omarchy.example/r.json"],
         ]
       }
     }
@@ -97,6 +143,7 @@
       value["channels"] = [
         "stable": ["catalog_url": shared],
         "rc": ["catalog_url": shared],
+        "rc-aurora": ["catalog_url": "https://releases.omarchy.example/a.json"],
       ]
       let altered = try JSONSerialization.data(withJSONObject: value)
 
@@ -123,6 +170,7 @@
       value["channels"] = [
         "stable": ["catalog_url": "http://releases.omarchy.example/s.json"],
         "rc": ["catalog_url": "https://releases.omarchy.example/b.json"],
+        "rc-aurora": ["catalog_url": "https://releases.omarchy.example/a.json"],
       ]
       let altered = try JSONSerialization.data(withJSONObject: value)
 
@@ -455,7 +503,7 @@
     private func descriptor(fingerprint: String) -> Data {
       Data(
         """
-        {"schema_version":2,"default_channel":"stable","channels":{"stable":{"catalog_url":"https://releases.omarchy.example/channels/stable/catalog.signed.json"},"rc":{"catalog_url":"https://releases.omarchy.example/channels/rc/catalog.signed.json"}},"trust_root_fingerprint":"\(fingerprint)","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
+        {"schema_version":3,"default_channel":"stable","channels":{"stable":{"catalog_url":"https://releases.omarchy.example/channels/stable/catalog.signed.json"},"rc":{"catalog_url":"https://releases.omarchy.example/channels/rc/catalog.signed.json"},"rc-aurora":{"catalog_url":"https://releases.omarchy.example/channels/rc-aurora/catalog.signed.json"}},"trust_root_fingerprint":"\(fingerprint)","helper_mach_service_name":"com.omarchy.mx.installer.helper","helper_code_signing_requirement":"identifier \\"com.omarchy.mx.installer.helper\\""}
         """.utf8
       )
     }

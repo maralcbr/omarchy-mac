@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "default_channel": "stable",
   "channels": {
     "stable": {
@@ -7,6 +7,9 @@
     },
     "rc": {
       "catalog_url": "https://downloads.aicodelabs.com.au/channels/rc/catalog.signed.json"
+    },
+    "rc-aurora": {
+      "catalog_url": "https://downloads.aicodelabs.com.au/channels/rc-aurora/catalog.signed.json"
     }
   },
   "trust_root_fingerprint": "sha256:0e86a878c2445009981a182a4642ec22ae14ab4d8365fad4b038cafc4802dc1b",

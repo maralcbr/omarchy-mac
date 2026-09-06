@@ -140,8 +140,8 @@ struct OnePageInstallerView: View {
         } else {
           StatusBadge(text: PlainLanguage.supportedBadge, kind: .ok)
         }
-        if channel == .rc {
-          StatusBadge(text: PlainLanguage.rcBadge, kind: .ok)
+        if channel != .stable {
+          StatusBadge(text: PlainLanguage.badge(for: channel), kind: .ok)
         }
       }
       .lineLimit(1)
