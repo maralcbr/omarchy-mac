@@ -233,6 +233,79 @@ rclone sync ~/.cache/omarchy/alarm-mirror/<date>/aarch64/<repo>/ r2:omarchy-rele
 and record the date in `apple-silicon-distribution-channels.md`. Snapshots are
 never modified or pruned automatically.
 
+## The Aurora lane
+
+The `RC (Aurora)` channel serves a second payload built from the Aurora Silicon
+kernel (`aurora-silicon/linux`, branch `aurora-wip`): DisplayPort alt-mode and
+USB4 for external monitors, variable refresh rate, ISP and AOP. It is a whole
+kernel, not a module, so it is a whole payload.
+
+The lane is deliberately parallel to the Asahi one rather than part of it. The
+kernel never enters the `[omarchy]` repository, it gets its own immutable
+release, and the payload is a second product descriptor. Nothing here runs
+during a normal Asahi release, and a build that does not ask for the aurora
+product produces the same bytes it did before this lane existed.
+
+| Artifact | Where | Made by |
+| --- | --- | --- |
+| kernel `aurora-packages-<pkgs commit>` | GitHub release, immutable, prerelease | `release-aurora-package.yml` |
+| payload `omarchy-<date>-aarch64-apple-silicon-aurora-os-package.zip` | this Mac | `omarchy-iso-make --product omarchy-mx-mac-aurora` |
+| channel `channels/rc-aurora` | R2 | `publish-channels os-promote --to rc-aurora` |
+
+1. Build and publish the kernel from `omarchy-pkgs`, then record the tag and
+   the `AURORA` digest the run prints:
+
+   ```bash
+   gh workflow run release-aurora-package.yml -f publish=true
+   ```
+
+2. Pin both halves in `omarchy-iso` — they are compared at build time and the
+   build stops if they disagree: `builder/aurora-package-snapshots.conf`
+   (`AURORA_REPOSITORY_RELEASE`, `_DESCRIPTOR_SHA256`, `_SOURCE_COMMIT`) and
+   the `[omarchy-aurora]` `Server` line in
+   `configs/airootfs/usr/share/omarchy-iso/pacman-online-installed-arm-aurora.conf`.
+
+3. Build the payload on this Mac. Give it its own checkpoint root so the Asahi
+   cache is untouched:
+
+   ```bash
+   OMARCHY_ASAHI_PRODUCT_NAME=omarchy-mx-mac-aurora OMARCHY_ASAHI_CHECKPOINT_ROOT=$HOME/.cache/omarchy/asahi-checkpoints-aurora bin/omarchy-iso-make --target aarch64/apple-silicon --artifact asahi-os-package --product omarchy-mx-mac-aurora --mode qualification
+   ```
+
+4. Publish as usual, with the aurora inputs, and promote to `rc-aurora`. Use
+   `--no-prune` the first time, before any stable promotion can prune a release
+   set the new channel is the only reference to:
+
+   ```bash
+   publish-channels os-promote --tag os-v4.0.2-mac.1.<date>-aurora --to rc-aurora --no-prune
+   ```
+
+Steps 2 through 4 need the owner's authorization, like every other publication.
+
+### What the Aurora lane does not do
+
+The kernel is pinned by commit. A new Aurora kernel is a new
+`aurora-packages-<sha>` release, a new pin, and a new payload; installed Aurora
+Macs do not follow it, because `[omarchy-aurora]` names one immutable release.
+Moving them is a manual repoint until that is worth automating.
+
+`test/vm/asahi-fresh` installs `linux-asahi` and boots a generic kernel, so it
+proves the runtime tolerates the Aurora name but cannot exercise the kernel.
+Aurora is qualified on real hardware.
+
+### Removing the lane
+
+Delete `pkgbuilds/linux-aurora`, `pkgbuilds/aurora-*`,
+`bin/aurora-package-descriptor`, `test/aurora-package-descriptor` and
+`.github/workflows/release-aurora-package.yml` from `omarchy-pkgs`; the
+`builder/*aurora*`, `products/omarchy-mx-mac-aurora.json`,
+`*-arm-aurora.conf` and `test/unit/aurora-product-test.sh` files from
+`omarchy-iso`; and `bin/omarchy-hw-apple-kernel` plus
+`scripts/release-inputs-aurora.template.json` here. Everything else is a hook
+that defaults to the Asahi behaviour, so reverting those files restores the
+previous lane exactly. Then drop `channels/rc-aurora/` and the aurora release
+sets from R2 and the `aurora-packages-*` releases from GitHub.
+
 ## Gates and timings
 
 | Step | Gate | Time |
