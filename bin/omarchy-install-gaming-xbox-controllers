@@ -11,7 +11,7 @@ echo "Installing Xbox controller Bluetooth support..."
 
 # Install xpadneo against the kernel headers for this platform.
 headers=linux-headers
-omarchy-hw-apple-silicon && headers=linux-asahi-headers
+omarchy-hw-apple-silicon && headers=$(omarchy-hw-apple-kernel)-headers
 omarchy-pkg-add "$headers" xpadneo-dkms
 
 # Prevent xpad/xpadneo driver conflict
