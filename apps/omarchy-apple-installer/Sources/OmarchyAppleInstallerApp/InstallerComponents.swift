@@ -73,6 +73,7 @@ struct StatusBadge: View {
 struct DiskBar: View {
   let macOSBytes: UInt64
   let omarchyBytes: UInt64
+  var unallocatedBytes: UInt64 = 0
   /// When set, the divider between the segments is draggable and reports the
   /// Omarchy share of the disk (0...1) as it moves.
   var onAdjustOmarchyFraction: ((Double) -> Void)?
@@ -84,18 +85,24 @@ struct DiskBar: View {
 
   var body: some View {
     GeometryReader { geometry in
-      let total = max(1, Double(macOSBytes + omarchyBytes))
+      let total = max(1, Double(macOSBytes + omarchyBytes + unallocatedBytes))
       let width = geometry.size.width
       let omarchyWidth = width * Double(omarchyBytes) / total
       ZStack(alignment: .leading) {
         HStack(spacing: 0) {
           segment(
-            name: "MacOS",
+            name: "macOS",
             bytes: macOSBytes,
-            width: width - omarchyWidth,
+            width: width * Double(macOSBytes) / total,
             background: OmarchyTheme.track,
             foreground: OmarchyTheme.secondaryText
           )
+          if unallocatedBytes > 0 {
+            segment(
+              name: "Unallocated", bytes: unallocatedBytes,
+              width: width * Double(unallocatedBytes) / total,
+              background: OmarchyTheme.window, foreground: OmarchyTheme.secondaryText)
+          }
           segment(
             name: "Omarchy",
             bytes: omarchyBytes,
@@ -135,6 +142,21 @@ struct DiskBar: View {
     .frame(height: 24)
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .accessibilityElement(children: .combine)
+    .accessibilityLabel("Disk allocation")
+    .accessibilityValue(
+      "macOS \(PlainLanguage.bytes(macOSBytes)), Omarchy \(PlainLanguage.bytes(omarchyBytes)), unallocated \(PlainLanguage.bytes(unallocatedBytes))"
+    )
+    .accessibilityAdjustableAction { direction in
+      guard !isFrozen else { return }
+      let total = max(1, Double(macOSBytes + omarchyBytes + unallocatedBytes))
+      let change: Double
+      switch direction {
+      case .increment: change = 1_000_000_000
+      case .decrement: change = -1_000_000_000
+      @unknown default: return
+      }
+      onCommitOmarchyFraction?(min(1, max(0, (Double(omarchyBytes) + change) / total)))
+    }
   }
 
   private func segment(
@@ -163,6 +185,7 @@ struct ProgressTrack: View {
   var height: CGFloat = 6
 
   @State private var sweep = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     GeometryReader { geometry in
@@ -182,7 +205,7 @@ struct ProgressTrack: View {
               .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
               value: sweep
             )
-            .onAppear { sweep = true }
+            .onAppear { sweep = !reduceMotion }
         }
       }
     }

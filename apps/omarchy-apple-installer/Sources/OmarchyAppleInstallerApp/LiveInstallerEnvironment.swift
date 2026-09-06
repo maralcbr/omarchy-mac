@@ -204,7 +204,12 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
       releaseConfiguration = configuration
     }
 
-    return .plan(Self.planDisplay(review: prepared.review, host: host))
+    return .plan(
+      Self.planDisplay(
+        review: prepared.review, host: host, recommendation: recommendation,
+        release:
+          "\(channel.rawValue.uppercased()) · \(release.assets.payload.fileURL.lastPathComponent)"
+      ))
   }
 
   // MARK: Approval
@@ -375,16 +380,27 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
 
   static func planDisplay(
     review: InstallerPlanReview,
-    host: AppleSiliconHostInspection
+    host: AppleSiliconHostInspection,
+    recommendation: InstallerAllocationRecommendation,
+    release: String
   ) -> PlanDisplay {
     let length = review.plan.lengthBytes
-    let total = max(host.storage.containerSizeBytes, length)
+    let total =
+      review.plan.candidateKind == "free"
+      ? host.storage.containerSizeBytes + recommendation.candidate.lengthBytes
+      : max(host.storage.containerSizeBytes, length)
 
     return PlanDisplay(
       diskTotalBytes: total,
       omarchyBytes: length,
       bindingDigest: review.identity.bindingDigest,
-      isResizable: review.plan.candidateKind != "replace"
+      isResizable: review.plan.candidateKind != "replace",
+      minimumBytes: recommendation.minimumBytes,
+      maximumBytes: recommendation.maximumBytes,
+      releaseDescription: release,
+      targetDescription:
+        "\(review.plan.storeIdentifier) · \(review.plan.sourceIdentifier) · \(review.plan.candidateKind == "free" ? "Use free space" : "Resize macOS container")",
+      fixedMacOSBytes: review.plan.candidateKind == "free" ? host.storage.containerSizeBytes : nil
     )
   }
 

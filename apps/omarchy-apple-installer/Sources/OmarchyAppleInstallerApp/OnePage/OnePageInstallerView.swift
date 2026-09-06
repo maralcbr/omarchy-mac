@@ -19,15 +19,21 @@ struct OnePageInstallerView: View {
   /// Which channel this Mac reads. Owned by the scene so the banner always
   /// names the channel the next preparation will actually fetch.
   let channel: ReleaseChannel
+  let onChannelAvailability: (Bool) -> Void
+  let onSessionAvailable: (InstallerSession) -> Void
 
   init(
     environment: any InstallerEnvironment,
     channel: ReleaseChannel = ReleaseChannelPreference().resolve(
       descriptorDefault: .stable
-    )
+    ),
+    onChannelAvailability: @escaping (Bool) -> Void = { _ in },
+    onSessionAvailable: @escaping (InstallerSession) -> Void = { _ in }
   ) {
     _session = State(initialValue: InstallerSession(environment: environment))
     self.channel = channel
+    self.onChannelAvailability = onChannelAvailability
+    self.onSessionAvailable = onSessionAvailable
   }
 
   var body: some View {
@@ -40,7 +46,7 @@ struct OnePageInstallerView: View {
       header
         .padding(.bottom, 26)
 
-      if !centresStage {
+      ScrollView {
         VStack(alignment: .leading, spacing: 14) {
           stage
         }
@@ -56,19 +62,14 @@ struct OnePageInstallerView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(.horizontal, 40)
-    .overlay {
-      if centresStage {
-        VStack(alignment: .leading, spacing: 14) {
-          stage
-        }
-        .frame(maxWidth: 560)
-        .padding(.horizontal, 40)
-      }
-    }
+
     .foregroundStyle(OmarchyTheme.text)
     .background(OmarchyTheme.window)
-    .focusEffectDisabled()
+    .onChange(of: session.canChangeChannel, initial: true) { _, available in
+      onChannelAvailability(available)
+    }
     .task {
+      onSessionAvailable(session)
       await session.inspect()
     }
     .onChange(of: channel) { _, _ in
@@ -92,6 +93,7 @@ struct OnePageInstallerView: View {
       if let context = session.credentialSheet.context {
         CredentialSheet(
           context: context,
+          isSimulation: session.isSimulation,
           onCancel: { session.dismissCredentials() },
           onSubmit: { authorization in
             Task { await session.submit(authorization) }
@@ -107,7 +109,6 @@ struct OnePageInstallerView: View {
         onConfirm: {
           showsShutdownConfirmation = false
           session.shutDown()
-          NSApplication.shared.terminate(nil)
         },
         onCancel: { showsShutdownConfirmation = false }
       )
@@ -140,9 +141,7 @@ struct OnePageInstallerView: View {
         } else {
           StatusBadge(text: PlainLanguage.supportedBadge, kind: .ok)
         }
-        if channel == .rc {
-          StatusBadge(text: PlainLanguage.rcBadge, kind: .ok)
-        }
+        StatusBadge(text: channel == .rc ? "RC · BETA" : "Stable", kind: .ok)
       }
       .lineLimit(1)
     } else {
@@ -150,16 +149,6 @@ struct OnePageInstallerView: View {
         .font(.system(size: 14, weight: .semibold))
         .foregroundStyle(OmarchyTheme.secondaryText)
     }
-  }
-
-  /// Only the Recovery steps sit in the exact middle of the window (drawn as
-  /// an overlay so the header and button don't skew them); everything else
-  /// hugs the header.
-  private var centresStage: Bool {
-    if case .awaitingRecovery = session.phase {
-      return true
-    }
-    return false
   }
 
   private var isBlocked: Bool {
@@ -209,6 +198,10 @@ struct OnePageInstallerView: View {
         isBusy: session.isBusy,
         onSizeChosen: { bytes in Task { await session.replan(omarchyBytes: bytes) } }
       )
+      .id(session.planRevision)
+      if let notice = session.allocationNotice {
+        Text(notice).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
+      }
       acknowledgement(acknowledged)
 
     case .awaitingInstall(let plan, let helper, _):
@@ -275,6 +268,9 @@ struct OnePageInstallerView: View {
       .keyboardShortcut(.defaultAction)
 
     case .awaitingInstall:
+      Button("Back to disk size") { session.editPlan() }
+        .omarchySecondaryButton()
+        .disabled(!session.canEditPlan)
       Button(PlainLanguage.planInstall) { session.presentInstallCredentials() }
         .omarchyPrimaryButton()
         .disabled(!session.canStartInstallation)
@@ -291,21 +287,26 @@ struct OnePageInstallerView: View {
         .keyboardShortcut(.defaultAction)
 
     case .done:
-      Button(PlainLanguage.startOver) { Task { await session.inspect() } }
+      Button("Close") { NSApplication.shared.terminate(nil) }
         .omarchySecondaryButton()
 
     case .failed(let failure):
-      Button(PlainLanguage.startOver) { Task { await session.inspect() } }
-        .omarchySecondaryButton()
+      if session.canInspect {
+        Button("Check again") { Task { await session.inspect() } }
+          .omarchySecondaryButton()
+      }
       if failure.retryRecoveryAvailable {
         Button(PlainLanguage.retry) { showsRecoveryRetryConfirmation = true }
           .omarchyPrimaryButton()
           .disabled(!session.canRetryRecoveryAuthorization)
           .keyboardShortcut(.defaultAction)
       } else if let url = failure.actionURL, let title = failure.actionTitle {
-        Button(title) { NSWorkspace.shared.open(url) }
-          .omarchyPrimaryButton()
-          .keyboardShortcut(.defaultAction)
+        Button(title) {
+          if !session.isSimulation { NSWorkspace.shared.open(url) }
+        }
+        .disabled(session.isSimulation)
+        .omarchyPrimaryButton()
+        .keyboardShortcut(.defaultAction)
       }
     }
   }
@@ -344,8 +345,29 @@ struct OnePageInstallerView: View {
             .padding(.top, 2)
         }
         if let technical {
-          TechnicalDetailText(text: technical)
-            .padding(.top, 4)
+          DisclosureGroup("Technical details") {
+            TechnicalDetailText(text: technical)
+            Button("Copy details") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(technical, forType: .string)
+            }
+          }.padding(.top, 4)
+        }
+        if session.hasExecutionStarted {
+          Text(
+            "A new installation is locked until the previous outcome is resolved. Keep power connected."
+          )
+          .font(OmarchyTheme.body)
+          DisclosureGroup("Last verified activity") {
+            if session.journal.feed.isEmpty {
+              Text(
+                "No verified checkpoint was received. This does not prove that no disk changes occurred."
+              )
+            }
+            ForEach(session.journal.feed) { line in
+              Text(line.text).font(OmarchyTheme.caption).textSelection(.enabled)
+            }
+          }
         }
       }
       .padding(.vertical, 2)
@@ -406,6 +428,17 @@ struct OnePageInstallerView: View {
         .padding(.bottom, 4)
       ForEach(handoff.steps) { step in
         RecoveryStepRow(step: step)
+      }
+      Text("Keep these instructions on another device before shutting down.")
+        .font(OmarchyTheme.body)
+      Button("Copy Recovery instructions") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+          handoff.steps.map { "\($0.number). \($0.title)" }.joined(separator: "\n"),
+          forType: .string)
+      }
+      if let message = session.shutdownMessage {
+        Text(message).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
       }
     }
   }
@@ -536,13 +569,13 @@ private struct DiskSplitPanel: View {
 
   @State private var exploredOmarchyGB: Double?
 
-  private static let minimumOmarchyGB: Double = 30
+  private var minimumOmarchyGB: Double { Double(plan.minimumBytes) / 1_000_000_000 }
 
   var body: some View {
     Panel {
       VStack(alignment: .leading, spacing: 10) {
         HStack(alignment: .firstTextBaseline) {
-          Text("MacOS " + PlainLanguage.bytes(plan.diskTotalBytes - displayedOmarchyBytes))
+          Text("macOS " + PlainLanguage.bytes(plan.macOSBytes(for: displayedOmarchyBytes)))
             .font(.system(size: 13.5, weight: .semibold).monospacedDigit())
             .foregroundStyle(OmarchyTheme.accent)
           Spacer(minLength: 8)
@@ -551,13 +584,38 @@ private struct DiskSplitPanel: View {
             .foregroundStyle(OmarchyTheme.accent)
         }
         DiskBar(
-          macOSBytes: plan.diskTotalBytes - displayedOmarchyBytes,
+          macOSBytes: plan.macOSBytes(for: displayedOmarchyBytes),
           omarchyBytes: displayedOmarchyBytes,
+          unallocatedBytes: plan.unallocatedBytes(for: displayedOmarchyBytes),
           onAdjustOmarchyFraction: editable ? { adjust($0) } : nil,
           onCommitOmarchyFraction: editable ? { commit($0) } : nil,
           isFrozen: isBusy
         )
         .transaction { $0.animation = nil }
+        if editable {
+          Stepper(
+            value: Binding(
+              get: { Double(displayedOmarchyBytes) / 1_000_000_000 },
+              set: { value in commit(value * 1_000_000_000 / Double(plan.diskTotalBytes)) }
+            ), in: minimumOmarchyGB...maximumOmarchyGB, step: 1
+          ) {
+            Text("Omarchy: \(PlainLanguage.bytes(displayedOmarchyBytes))")
+          }
+          .disabled(isBusy)
+          .accessibilityLabel("Space for Omarchy")
+        }
+        if plan.fixedMacOSBytes != nil {
+          Text(
+            "Unallocated: \(PlainLanguage.bytes(plan.unallocatedBytes(for: displayedOmarchyBytes))). macOS keeps its current capacity."
+          )
+          .font(OmarchyTheme.body)
+        }
+        Text(plan.releaseDescription).font(OmarchyTheme.caption).textSelection(.enabled)
+        Text(plan.targetDescription).font(OmarchyTheme.caption).textSelection(.enabled)
+        Text(
+          "Omarchy receives the space shown above. The remaining macOS capacity is shown on the left. Recovery authorization follows after shutdown."
+        )
+        .font(OmarchyTheme.body)
         if isBusy {
           // A released divider re-plans through the engine, which takes a
           // moment; say so instead of leaving the bar and the tick inert.
@@ -570,7 +628,7 @@ private struct DiskSplitPanel: View {
           }
         } else if editable {
           Text(
-            "Drag the divider to choose how much space Omarchy gets (minimum \(Int(Self.minimumOmarchyGB)) GB)"
+            "Choose between \(PlainLanguage.bytes(plan.minimumBytes)) and \(PlainLanguage.bytes(plan.maximumBytes)). The engine verifies the final allocation."
           )
           .font(OmarchyTheme.caption)
           .foregroundStyle(OmarchyTheme.secondaryText)
@@ -591,14 +649,13 @@ private struct DiskSplitPanel: View {
   }
 
   private var maximumOmarchyGB: Double {
-    let totalGB = Double(plan.diskTotalBytes) / 1_000_000_000
-    return max(Self.minimumOmarchyGB + 10, min(800, (totalGB - 120) / 10 * 10).rounded(.down))
+    Double(plan.maximumBytes) / 1_000_000_000
   }
 
   private func adjust(_ fraction: Double) {
-    let totalGB = Double(plan.diskTotalBytes) / 1_000_000_000
-    let steppedGB = ((totalGB * fraction) / 10).rounded() * 10
-    exploredOmarchyGB = min(maximumOmarchyGB, max(Self.minimumOmarchyGB, steppedGB))
+    let requested = Double(plan.diskTotalBytes) * min(1, max(0, fraction))
+    let chosen = min(Double(plan.maximumBytes), max(Double(plan.minimumBytes), requested))
+    exploredOmarchyGB = chosen / 1_000_000_000
   }
 
   private func commit(_ fraction: Double) {
@@ -614,27 +671,17 @@ private struct DiskSplitPanel: View {
 
 // MARK: - The install bar
 
-/// One bar for the whole installation: every stage counts equally and the
-/// active stage keeps moving between journal events. A degraded stream
-/// sweeps instead.
+/// Stage count and verified activity describe progress without inventing a
+/// percentage for operations whose duration is unknown.
 private struct InstallPanel: View {
   let progress: InstallProgressDisplay
 
   private var stageLabel: String {
     let index = progress.stageIndex
     if progress.stageLabels.indices.contains(index) {
-      return progress.stageLabels[index]
+      return progress.phaseTitle
     }
     return progress.phaseTitle
-  }
-
-  private var overallFraction: Double? {
-    let count = progress.stageFractions.count
-    guard count > 0 else {
-      return nil
-    }
-    let total = progress.stageFractions.reduce(0) { $0 + min(1, max(0, $1)) }
-    return min(1, max(0, total / Double(count)))
   }
 
   var body: some View {
@@ -651,13 +698,17 @@ private struct InstallPanel: View {
               .font(OmarchyTheme.caption.monospacedDigit())
               .foregroundStyle(OmarchyTheme.secondaryText)
           }
-          if let overallFraction {
-            Text("\(Int((overallFraction * 100).rounded()))%")
-              .font(OmarchyTheme.body.monospacedDigit())
-              .foregroundStyle(OmarchyTheme.secondaryText)
+          Text(
+            "Step \(min(progress.stageIndex + 1, progress.stageLabels.count)) of \(progress.stageLabels.count)"
+          )
+          .font(OmarchyTheme.body.monospacedDigit())
+        }
+        ProgressTrack(fraction: nil, height: 18)
+        DisclosureGroup("Activity details") {
+          ForEach(progress.feed) { line in
+            Text(line.text).font(OmarchyTheme.caption).textSelection(.enabled)
           }
         }
-        ProgressTrack(fraction: progress.degraded ? nil : overallFraction, height: 18)
         if progress.degraded {
           Text(PlainLanguage.installDegraded)
             .font(OmarchyTheme.caption)

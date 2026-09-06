@@ -44,6 +44,24 @@
     public private(set) var journal = LiveInstallJournalModel()
     public private(set) var isBusy = false
     private var isExecuting = false
+    private var operationID = UUID()
+    public private(set) var planRevision = 0
+    public private(set) var allocationNotice: String?
+    public private(set) var shutdownMessage: String?
+
+    public var isSimulation: Bool { environment.isSimulation }
+    public var canInspect: Bool { !isBusy && !isExecuting && !hasExecutionStarted }
+    public var canChangeChannel: Bool { canInspect && credentialSheet.context == nil }
+    public var canEditPlan: Bool {
+      guard case .awaitingInstall = phase else { return false }
+      return canInspect && credentialSheet.context == nil
+    }
+
+    public func editPlan() {
+      guard canEditPlan, case .awaitingInstall(let plan, _, _) = phase else { return }
+      environment.discardApproval()
+      phase = .planReview(plan, acknowledged: false)
+    }
 
     /// One-shot latch: an approved plan may be submitted for execution once.
     /// Cleared only by the re-inspect / re-prepare reset cascades, plus the one
@@ -113,6 +131,8 @@
     // MARK: Inspection
 
     public func inspect() async {
+      guard canInspect else { return }
+      operationID = UUID()
       resetForInspection()
       phase = .inspecting
       isBusy = true
@@ -159,27 +179,13 @@
       await preparePlan(host: host)
     }
 
-    /// Re-plan with a chosen amount of space for Omarchy. The verified files
-    /// are reused, so this lands straight back in review with the new plan.
-    /// Re-plan for a chosen size. The acknowledgement survives: it says the
-    /// person is ready to partition, and the size is what they just chose, so
-    /// dropping it here only made a tick before or during the drag vanish.
+    /// Every returned plan is reviewed anew, even when the engine clamps to
+    /// the old allocation. A revision clears any tentative view value.
     public func replan(omarchyBytes: UInt64) async {
-      let acknowledged: Bool
-      switch phase {
-      case .planReview(_, let value):
-        acknowledged = value
-      case .planPrepared:
-        acknowledged = false
-      default:
-        return
-      }
+      guard !isBusy && !isExecuting, case .planReview = phase else { return }
       isReplanning = true
       defer { isReplanning = false }
       await preparePlan(host: lastHost, omarchyBytes: omarchyBytes, hold: false)
-      if acknowledged, case .planReview(let plan, _) = phase {
-        phase = .planReview(plan, acknowledged: true)
-      }
     }
 
     private func preparePlan(
@@ -187,6 +193,9 @@
       omarchyBytes: UInt64? = nil,
       hold: Bool = true
     ) async {
+      guard !isBusy && !isExecuting && !hasExecutionStarted else { return }
+      operationID = UUID()
+      let currentOperation = operationID
       resetForPlanPreparation()
       lastOmarchyBytes = omarchyBytes
       if !isReplanning {
@@ -199,11 +208,20 @@
         let outcome = try await environment.preparePlan(omarchyBytes: omarchyBytes) {
           [weak self] update in
           Task { @MainActor in
-            self?.applyPreparation(update)
+            guard let self, self.operationID == currentOperation else { return }
+            self.applyPreparation(update)
           }
         }
+        guard operationID == currentOperation else { return }
         switch outcome {
         case .plan(let plan):
+          planRevision += 1
+          allocationNotice =
+            omarchyBytes.map { requested in
+              requested == plan.omarchyBytes
+                ? nil
+                : "The available space allows \(PlainLanguage.bytes(plan.omarchyBytes)), adjusted from \(PlainLanguage.bytes(requested)). Review this allocation before installing."
+            } ?? nil
           let lastUpdate: AssetProgressUpdate =
             if case .preparingPlan(let update) = phase {
               update
@@ -274,14 +292,14 @@
     }
 
     public func setAcknowledged(_ value: Bool) {
-      guard case .planReview(let plan, _) = phase else {
+      guard !isBusy, case .planReview(let plan, _) = phase else {
         return
       }
       phase = .planReview(plan, acknowledged: value)
     }
 
     public func approve() {
-      guard case .planReview(let plan, let acknowledged) = phase,
+      guard !isBusy && !isExecuting, case .planReview(let plan, let acknowledged) = phase,
         acknowledged
       else {
         return
@@ -356,6 +374,7 @@
     }
 
     public func dismissCredentials() {
+      guard !isExecuting else { return }
       retrySheet = .hidden
       guard case .awaitingInstall(let plan, let helper, _) = phase else {
         return
@@ -366,7 +385,7 @@
     // MARK: Execution
 
     public func submit(_ authorization: MachineOwnerAuthorization) async {
-      guard let context = credentialSheet.context else {
+      guard !isExecuting, let context = credentialSheet.context else {
         return
       }
       switch context.kind {
@@ -397,6 +416,9 @@
         }
       }
 
+      operationID = UUID()
+      let currentOperation = operationID
+      let receivedJournal = SessionJournalBuffer()
       let plan = approvedPlan
       let helper = environment.helperStatus
       // The sheet stays up, locked, while the helper checks the credentials.
@@ -417,15 +439,22 @@
           operation: context.kind,
           authorization: authorization,
           journal: { [weak self] chunk in
+            receivedJournal.append(chunk)
             Task { @MainActor in
-              self?.consumeJournal(chunk)
+              guard let self, self.operationID == currentOperation else { return }
+              self.drainJournal(receivedJournal)
             }
           }
         )
+        guard operationID == currentOperation else { return }
+        drainJournal(receivedJournal)
+        operationID = UUID()
         recoveryRetryAvailable = false
         beginInstallingIfNeeded()
         route(completion)
       } catch {
+        drainJournal(receivedJournal)
+        operationID = UUID()
         handleExecutionFailure(error, context: context, plan: plan, helper: helper)
       }
     }
@@ -436,7 +465,7 @@
       if case .installing = phase {
         return
       }
-      dismissCredentials()
+      retrySheet = .hidden
       phase = .installing(journal.display(startedAt: installStartedAt))
     }
 
@@ -491,14 +520,21 @@
       )
     }
 
-    /// The Finish screen's Shut Down action. A real environment hands the
-    /// request to macOS and the machine goes down; the app quits right after
-    /// (the caller terminates it), so no further screen follows.
-    public func shutDown() {
-      guard case .awaitingRecovery = phase else {
-        return
-      }
-      _ = environment.requestShutdown()
+    /// Retain the handoff even when another app rejects shutdown. A successful
+    /// Apple Event dispatch is not proof that macOS has shut down.
+    @discardableResult
+    public func shutDown() -> Bool {
+      guard case .awaitingRecovery = phase else { return false }
+      let accepted = environment.requestShutdown()
+      shutdownMessage =
+        isSimulation
+        ? (accepted
+          ? "Simulation: shutdown request accepted. This Mac stays on."
+          : "Simulation: shutdown failed. The instructions remain available.")
+        : (accepted
+          ? "Shutdown requested. If another app cancels it, use Apple menu → Shut Down when ready."
+          : "Could not request shutdown. Save your work, then choose Apple menu → Shut Down. Keep these instructions for the next step.")
+      return accepted
     }
 
     private func route(_ completion: CompletionDisplay) {
@@ -520,6 +556,10 @@
           )
         )
       }
+    }
+
+    private func drainJournal(_ buffer: SessionJournalBuffer) {
+      for chunk in buffer.takeAll() { consumeJournal(chunk) }
     }
 
     private func consumeJournal(_ chunk: Data) {
@@ -547,6 +587,8 @@
     /// progress, latch, or credential state may survive a re-inspection.
     private func resetForInspection() {
       environment.discardApproval()
+      shutdownMessage = nil
+      allocationNotice = nil
       stagingProgress = [:]
       journal.reset()
       retrySheet = .hidden
@@ -565,6 +607,19 @@
       hasExecutionStarted = false
       recoveryRetryAvailable = false
       isExecuting = false
+    }
+  }
+  /// Receipt is synchronous even when UI delivery needs a main-actor hop.
+  /// Draining at completion preserves the final checkpoint before the reply.
+  private final class SessionJournalBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [Data] = []
+    func append(_ chunk: Data) { lock.withLock { chunks.append(chunk) } }
+    func takeAll() -> [Data] {
+      lock.withLock {
+        defer { chunks.removeAll(keepingCapacity: true) }
+        return chunks
+      }
     }
   }
 #endif

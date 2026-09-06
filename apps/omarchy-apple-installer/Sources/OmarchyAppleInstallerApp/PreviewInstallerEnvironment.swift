@@ -22,6 +22,8 @@
       self.journalURL = journalURL
     }
 
+    var isSimulation: Bool { true }
+
     var installationBlocked: Bool { scenario == .unsupported }
     var engineSupported: Bool { scenario != .unsupported }
 
@@ -115,7 +117,9 @@
       PlanDisplay(
         diskTotalBytes: total,
         omarchyBytes: length,
-        bindingDigest: "sha256:" + String(repeating: "b", count: 64)
+        bindingDigest: "sha256:" + String(repeating: "b", count: 64),
+        minimumBytes: 30_000_000_000, maximumBytes: total - 120_000_000_000,
+        releaseDescription: "Recorded preview"
       )
     }
 

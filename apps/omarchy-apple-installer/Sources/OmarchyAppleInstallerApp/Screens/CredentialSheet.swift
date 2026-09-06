@@ -13,10 +13,11 @@ import SwiftUI
 /// APIs accept only `MachineOwnerAuthorization`.
 struct CredentialSheet: View {
   let context: CredentialSheetContext
+  let isSimulation: Bool
   let onCancel: () -> Void
   let onSubmit: (MachineOwnerAuthorization) -> Void
 
-  @State private var input = CredentialInput(username: NSUserName())
+  @State private var input = CredentialInput(username: "")
   @FocusState private var focus: Field?
   @State private var showsLongWait = false
 
@@ -40,28 +41,42 @@ struct CredentialSheet: View {
           .padding(.bottom, 10)
       }
 
-      field(
-        label: PlainLanguage.authorizeUsernameLabel,
-        reason: input.usernameReason
-      ) {
-        TextField("", text: $input.username)
-          .textFieldStyle(.roundedBorder)
-          .textContentType(.username)
-          .autocorrectionDisabled()
-          .focused($focus, equals: .username)
-          .onSubmit { focus = .password }
-      }
+      Text(
+        isSimulation
+          ? "Simulation uses a dummy account. Do not enter a real password."
+          : "Use the macOS account that owns this Mac. Its login password authorizes the reviewed disk changes and Recovery setup; it is not an Omarchy account password."
+      )
+      .font(OmarchyTheme.body)
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.bottom, 14)
 
-      field(
-        label: PlainLanguage.authorizePasswordLabel,
-        reason: input.passwordReason
-      ) {
-        SecureField("", text: $input.password)
-          .textFieldStyle(.roundedBorder)
-          .textContentType(.password)
-          .privacySensitive()
-          .focused($focus, equals: .password)
-          .onSubmit(submit)
+      if !isSimulation {
+        field(
+          label: PlainLanguage.authorizeUsernameLabel,
+          reason: input.usernameReason
+        ) {
+          TextField("", text: $input.username)
+            .textFieldStyle(.roundedBorder)
+            .textContentType(.username)
+            .accessibilityLabel(PlainLanguage.authorizeUsernameLabel)
+            .autocorrectionDisabled()
+            .focused($focus, equals: .username)
+            .onSubmit { focus = .password }
+        }
+
+        field(
+          label: PlainLanguage.authorizePasswordLabel,
+          reason: input.passwordReason
+        ) {
+          SecureField("", text: $input.password)
+            .textFieldStyle(.roundedBorder)
+            .textContentType(.password)
+            .accessibilityLabel(PlainLanguage.authorizePasswordLabel)
+            .privacySensitive()
+            .focused($focus, equals: .password)
+            .onSubmit(submit)
+        }
+
       }
 
       if context.isVerifying, showsLongWait {
@@ -98,13 +113,15 @@ struct CredentialSheet: View {
       .padding(.top, 14)
     }
     .padding(24)
-    .frame(width: 304)
+    .frame(width: 380)
     .foregroundStyle(OmarchyTheme.text)
     .background(OmarchyTheme.window)
     .disabled(context.isVerifying)
     .animation(.easeInOut(duration: 0.2), value: context.isVerifying)
     .animation(.easeInOut(duration: 0.2), value: context.error)
     .onAppear {
+      input.username = isSimulation ? "simulation" : NSUserName()
+      if isSimulation { input.password = "simulation-only" }
       focus = input.username.isEmpty ? .username : .password
     }
     // The spinner alone reads as stuck once the helper moves from checking
@@ -119,6 +136,7 @@ struct CredentialSheet: View {
     }
     .onChange(of: context.error) { _, error in
       if error == .credentialsRejected {
+        if isSimulation { input.password = "simulation-only" }
         focus = .password
       }
     }

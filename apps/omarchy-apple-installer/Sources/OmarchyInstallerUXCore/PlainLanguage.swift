@@ -12,12 +12,12 @@
     // MARK: Screen A — Check
 
     public static let checkSubheadline =
-      "After the installation you will be able to boot start Omarchy or MacOS."
+      "After installation, you can choose Omarchy or macOS when you start your Mac."
     public static let checkContinue = "Continue"
     public static let checkAgain = "Check again"
     public static let inspectingHeadline = "Checking this Mac"
     public static let inspectingSubheadline =
-      "Reading the model, MacOS version, power, FileVault, and free space."
+      "Reading the model, macOS version, power, FileVault, and free space."
 
     // MARK: Screen A2 — Existing install
 
@@ -28,7 +28,7 @@
 
     public static let replanning = "Updating the plan for that size…"
     public static let planAcknowledgement =
-      "I am ready to partition my ssd and install."
+      "I have a current backup and approve the disk allocation shown above."
     public static let planInstall = "Install"
     public static let downloadingPackagesTitle = "Downloading the Omarchy packages"
 
@@ -48,11 +48,11 @@
     public static let authorizeTitle =
       "Authorize the changes"
     public static let authorizeRetryTitle = "Retry Recovery authorization."
-    public static let authorizeUsernameLabel = "Username"
+    public static let authorizeUsernameLabel = "macOS account name"
     public static let authorizeChecking = "Verifying"
     public static let authorizeStillWorking =
       "Still working. Once the password is accepted the installer package is prepared, which takes a few minutes."
-    public static let authorizePasswordLabel = "Password"
+    public static let authorizePasswordLabel = "macOS login password"
     public static let authorizeCancel = "Cancel"
     public static let authorizeRetryAction = "Authorize"
     public static let authorizeRejected =
@@ -127,7 +127,7 @@
     // MARK: Screen E — Recovery
 
     public static let recoveryHeadline = "Follow the steps below to install"
-    public static let recoveryShutDown = "Shutdown your Mac"
+    public static let recoveryShutDown = "Shut down your Mac"
     public static let shutdownConfirmationTitle = "Shut down this Mac now?"
     public static let shutdownConfirmationBody =
       "After it turns off, hold the power button until “Loading startup options” appears, then pick Omarchy → Finish Installation and sign in."
@@ -151,7 +151,7 @@
           append("Shut down")
           append("After the Mac is off, hold the power button until startup options appear")
         case "authenticateMachineOwner":
-          append("Pick Omarchy → Finish Installation")
+          append("Pick Omarchy → Finish Installation, then sign in with your macOS account")
         default:
           append(token)
         }
@@ -159,7 +159,7 @@
       if steps.isEmpty {
         append("Shut down")
         append("Hold the power button")
-        append("Pick Omarchy → Finish Installation")
+        append("Pick Omarchy → Finish Installation, then sign in with your macOS account")
       }
       return steps
     }
@@ -179,7 +179,7 @@
         label: "Read-back",
         value: "installed files re-hashed and matched"
       ),
-      PlanFactRow(label: "MacOS", value: "untouched, full security"),
+      PlanFactRow(label: "macOS", value: "untouched, full security"),
       PlanFactRow(label: "Recovery", value: "partition intact"),
     ]
 
@@ -250,7 +250,7 @@
         return FailureDisplay(
           headline: "Recovery authorization didn’t complete",
           plainDetail:
-            "The disk work finished and was verified. MacOS still boots. Retry the last step.",
+            "The disk work finished and was verified. macOS still boots. Retry the last step.",
           technicalDetail: technical,
           remedy:
             "Re-enter the machine-owner password to retry only the checkpoint-bound boot-policy handoff.",
@@ -266,13 +266,13 @@
             plainDetail:
               "Nothing was changed. The helper checks the password before any disk work starts.",
             technicalDetail: technical,
-            remedy: "Enter the machine owner’s MacOS user name and password again."
+            remedy: "Enter the machine owner’s macOS user name and password again."
           )
         case .recoveryAuthorizationFailed:
           return FailureDisplay(
             headline: "Recovery authorization didn’t complete",
             plainDetail:
-              "The disk work finished and was verified. MacOS still boots.",
+              "The disk work finished and was verified. macOS still boots.",
             technicalDetail: technical,
             remedy: "Retry only the Recovery authorization step."
           )
@@ -288,9 +288,10 @@
           return FailureDisplay(
             headline: "The privileged helper is not reachable",
             plainDetail:
-              "Nothing was changed. The helper is installed by the Omarchy installer package and runs as a system service.",
+              "Contact with the helper was lost. Disk changes may have started; the outcome is not yet confirmed.",
             technicalDetail: technical,
-            remedy: "Run the Omarchy installer package again, then try again."
+            remedy:
+              "Keep power connected. Preserve the details below and review the trusted run journal before another installation attempt."
           )
         case .helperRejected(let domain, let code):
           let busy = ClosedEngineHelperError.busy as NSError
@@ -305,17 +306,19 @@
           return FailureDisplay(
             headline: "The privileged helper refused this request",
             plainDetail:
-              "Nothing was changed. The helper revalidates the plan, the artifacts, and this Mac before doing any work.",
+              "The helper returned an error. This response alone does not establish whether disk changes started.",
             technicalDetail: technical,
-            remedy: "Prepare and review the plan again."
+            remedy:
+              "Preserve the details and review the trusted run journal before another attempt."
           )
         default:
           return FailureDisplay(
-            headline: "The installation could not start",
+            headline: "The installation outcome is not confirmed",
             plainDetail:
-              "Nothing was changed. The request was rejected before any disk work.",
+              "The helper did not return a confirmed result. Disk changes may have started.",
             technicalDetail: technical,
-            remedy: "Prepare and review the plan again."
+            remedy:
+              "Preserve the details and review the trusted run journal before another attempt."
           )
         }
       }
@@ -347,11 +350,26 @@
           return FailureDisplay(
             headline: "The privileged helper stopped the installation",
             plainDetail:
-              "The engine transcript did not match the approved plan, so nothing continued.",
+              "The helper stopped with an error. Review the last verified checkpoint to determine what completed.",
             technicalDetail: technical,
-            remedy: "Prepare and review the plan again."
+            remedy:
+              "Preserve the details and review the trusted run journal before another attempt."
           )
         }
+      }
+
+      if error is InstallerAllocationRecommendationError {
+        return FailureDisplay(
+          headline: "There is not enough eligible space",
+          plainDetail:
+            "No disk allocation meets the installation requirements. No disk changes were made.",
+          technicalDetail: technical, remedy: "Free up space in macOS, then check again.")
+      }
+      if error is URLError {
+        return FailureDisplay(
+          headline: "The download was interrupted",
+          plainDetail: "The network request did not complete. Nothing was installed.",
+          technicalDetail: technical, remedy: "Check your connection, then try again.")
       }
 
       if let preparation = error as? InstallerPlanPreparationError {
@@ -369,7 +387,7 @@
             plainDetail:
               "Nothing was downloaded or changed beyond verified files. The pinned engine did not offer a usable place for Omarchy.",
             technicalDetail: technical,
-            remedy: "Free up space in MacOS, then check again."
+            remedy: "Free up space in macOS, then check again."
           )
         }
       }
@@ -492,7 +510,8 @@
         plainDetail:
           "Review the last trusted checkpoint before continuing. Nothing continues automatically.",
         technicalDetail: technical,
-        remedy: "Start over to inspect this Mac again."
+        remedy:
+          "If execution started, keep power connected and review the trusted run journal before another attempt."
       )
     }
 

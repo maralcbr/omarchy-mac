@@ -129,7 +129,7 @@
       XCTAssertFalse(acknowledged)
     }
 
-    func testReplanKeepsAnAcknowledgementAlreadyGiven() async {
+    func testReplanRequiresFreshAcknowledgementEvenWhenAllocationIsUnchanged() async {
       let environment = MockInstallerEnvironment()
       let session = InstallerSession(environment: environment)
       await session.inspect()
@@ -142,9 +142,11 @@
       guard case .planReview(_, let acknowledged) = session.phase else {
         return XCTFail("Expected planReview after replan, got \(session.phase)")
       }
-      XCTAssertTrue(acknowledged, "a tick given before the drag must survive the re-plan")
+      XCTAssertFalse(acknowledged)
+      XCTAssertEqual(session.planRevision, 2)
+      XCTAssertNotNil(session.allocationNotice)
       session.approve()
-      XCTAssertEqual(environment.approveCount, 1)
+      XCTAssertEqual(environment.approveCount, 0)
     }
 
     func testApproveRequiresAcknowledgement() async {
@@ -379,34 +381,154 @@
       XCTAssertEqual(session.stagingProgress["engine"]?.bytesCompleted, 5)
     }
 
-    func testReInspectionResetsApprovalAndLatches() async throws {
+    func testReInspectionCannotClearAnExecutionLatch() async throws {
       let environment = MockInstallerEnvironment()
-      environment.executeResults = [
-        .failure(EngineXPCSubmissionError.recoveryAuthorizationFailed)
+      environment.executeResults = [.failure(EngineXPCSubmissionError.recoveryAuthorizationFailed)]
+      let session = await ready(environment)
+      session.presentInstallCredentials()
+      await session.submit(try authorization())
+      let phase = session.phase
+      let discards = environment.discardCount
+      await session.inspect()
+      XCTAssertEqual(session.phase, phase)
+      XCTAssertEqual(environment.discardCount, discards)
+      XCTAssertTrue(session.hasExecutionStarted)
+      XCTAssertTrue(session.recoveryRetryAvailable)
+      XCTAssertFalse(session.canChangeChannel)
+    }
+
+    func testCancellationAllowsEditingButRevokesApproval() async {
+      let environment = MockInstallerEnvironment()
+      let session = await ready(environment)
+      session.presentInstallCredentials()
+      session.dismissCredentials()
+      XCTAssertTrue(session.canEditPlan)
+      session.editPlan()
+      XCTAssertFalse(environment.hasApprovedPlan)
+      guard case .planReview(_, let acknowledged) = session.phase else {
+        return XCTFail("Expected review")
+      }
+      XCTAssertFalse(acknowledged)
+      XCTAssertFalse(session.canStartInstallation)
+    }
+
+    func testInspectionCannotOverlapInspection() async {
+      let environment = MockInstallerEnvironment()
+      let gate = OperationGate()
+      environment.inspectGate = gate
+      let session = InstallerSession(environment: environment)
+      let operation = Task { await session.inspect() }
+      await gate.waitUntilEntered()
+      let discards = environment.discardCount
+      await session.inspect()
+      XCTAssertEqual(environment.discardCount, discards)
+      XCTAssertFalse(session.canChangeChannel)
+      await gate.release()
+      await operation.value
+      guard case .welcome = session.phase else { return XCTFail("Expected welcome") }
+    }
+
+    func testPreparationBlocksResetAndRejectsDelayedProgress() async {
+      let environment = MockInstallerEnvironment()
+      let session = InstallerSession(environment: environment)
+      await session.inspect()
+      let gate = OperationGate()
+      environment.prepareGate = gate
+      let operation = Task { await session.continueToPlan() }
+      await gate.waitUntilEntered()
+      let discards = environment.discardCount
+      await session.inspect()
+      XCTAssertEqual(environment.discardCount, discards)
+      XCTAssertFalse(session.canChangeChannel)
+      await gate.release()
+      await operation.value
+      session.continueToPlanReview()
+      let phase = session.phase
+      environment.savedProgress?(AssetProgressUpdate(stage: .downloading))
+      await Task.yield()
+      XCTAssertEqual(session.phase, phase)
+    }
+
+    func testExecutionBlocksResetBackAndDuplicateSubmission() async throws {
+      let environment = MockInstallerEnvironment()
+      let session = await ready(environment)
+      let gate = OperationGate()
+      environment.executeGate = gate
+      session.presentInstallCredentials()
+      let authorization = try authorization()
+      let operation = Task { await session.submit(authorization) }
+      await gate.waitUntilEntered()
+      let phase = session.phase
+      let discards = environment.discardCount
+      await session.inspect()
+      session.editPlan()
+      session.dismissCredentials()
+      await session.submit(authorization)
+      XCTAssertEqual(session.phase, phase)
+      XCTAssertEqual(environment.discardCount, discards)
+      XCTAssertEqual(environment.executeCount, 1)
+      XCTAssertTrue(session.hasExecutionStarted)
+      XCTAssertFalse(session.canChangeChannel)
+      await gate.release()
+      await operation.value
+      let terminal = session.phase
+      environment.savedJournal?(try JournalFixture.data())
+      await Task.yield()
+      XCTAssertEqual(session.phase, terminal)
+    }
+
+    func testUnknownOutcomesStayLockedWithAndWithoutCheckpointEvidence() async throws {
+      let errors: [any Error] = [
+        EngineXPCSubmissionError.connectionFailed,
+        EngineXPCSubmissionError.emptyResponse,
+        EngineXPCSubmissionError.helperRejected(domain: "Executor", code: 1),
       ]
+      for error in errors {
+        for hasCheckpoint in [false, true] {
+          let environment = MockInstallerEnvironment()
+          environment.executeResults = [.failure(error)]
+          if hasCheckpoint {
+            environment.journalChunks = Array(try JournalFixture.lines().prefix(5))
+          }
+          let session = await ready(environment)
+          session.presentInstallCredentials()
+          await session.submit(try authorization())
+          guard case .failed(let failure) = session.phase else {
+            return XCTFail("Expected failure")
+          }
+          XCTAssertFalse(failure.plainDetail.contains("Nothing was changed"))
+          XCTAssertFalse(session.canInspect)
+          XCTAssertFalse(session.canRetryRecoveryAuthorization)
+          XCTAssertEqual(session.journal.checkpoints.isEmpty, !hasCheckpoint)
+        }
+      }
+    }
+
+    func testShutdownRetainsInstructionsForAcceptedAndFailedRequests() async throws {
+      for accepted in [false, true] {
+        let environment = MockInstallerEnvironment()
+        environment.shutdownAccepted = accepted
+        let session = await ready(environment)
+        XCTAssertFalse(session.shutDown())
+        XCTAssertEqual(environment.requestShutdownCount, 0)
+        session.presentInstallCredentials()
+        await session.submit(try authorization())
+        let phase = session.phase
+        XCTAssertEqual(session.shutDown(), accepted)
+        XCTAssertEqual(session.phase, phase)
+        XCTAssertNotNil(session.shutdownMessage)
+        XCTAssertEqual(environment.requestShutdownCount, 1)
+      }
+    }
+
+    private func ready(_ environment: MockInstallerEnvironment) async -> InstallerSession {
       let session = InstallerSession(environment: environment)
       await session.inspect()
       await session.continueToPlan()
       session.continueToPlanReview()
       session.setAcknowledged(true)
       session.approve()
-      session.presentInstallCredentials()
-      await session.submit(try authorization())
-      XCTAssertTrue(session.hasExecutionStarted)
-      XCTAssertTrue(session.recoveryRetryAvailable)
-
-      let discardsBefore = environment.discardCount
-      await session.inspect()
-
-      XCTAssertFalse(session.hasExecutionStarted)
-      XCTAssertFalse(session.recoveryRetryAvailable)
-      XCTAssertTrue(session.stagingProgress.isEmpty)
-      XCTAssertTrue(session.journal.raw.isEmpty)
-      XCTAssertNil(session.credentialSheet.context)
-      XCTAssertGreaterThan(environment.discardCount, discardsBefore)
-      guard case .welcome = session.phase else {
-        return XCTFail("Expected welcome, got \(session.phase)")
-      }
+      return session
     }
 
     func testPreparationFailureSurfacesTechnicalDetail() async {
@@ -486,6 +608,22 @@
     }
   }
 
+  actor OperationGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+      entered = true
+      await withCheckedContinuation { continuation = $0 }
+    }
+    func waitUntilEntered() async {
+      while !entered { await Task.yield() }
+    }
+    func release() {
+      continuation?.resume()
+      continuation = nil
+    }
+  }
+
   final class MockInstallerEnvironment: InstallerEnvironment, @unchecked Sendable {
     var host = MockInstallerEnvironment.supportedHost
     var plan = MockInstallerEnvironment.samplePlan
@@ -493,6 +631,12 @@
     var installationBlocked = false
     var engineSupported = true
     var requestShutdownCount = 0
+    var shutdownAccepted = false
+    var inspectGate: OperationGate?
+    var prepareGate: OperationGate?
+    var executeGate: OperationGate?
+    var savedProgress: (@Sendable (AssetProgressUpdate) -> Void)?
+    var savedJournal: (@Sendable (Data) -> Void)?
     var inspectError: (any Error)?
     var prepareError: (any Error)?
     var approveError: (any Error)?
@@ -512,6 +656,7 @@
     var helperStatus: HelperDisplay { helper }
 
     func inspect() async throws -> HostDisplay {
+      await inspectGate?.wait()
       approved = false
       if let inspectError {
         throw inspectError
@@ -525,6 +670,8 @@
       omarchyBytes: UInt64?,
       progress: @escaping @Sendable (AssetProgressUpdate) -> Void
     ) async throws -> PlanPreparationDisplay {
+      savedProgress = progress
+      await prepareGate?.wait()
       prepareCount += 1
       lastOmarchyBytes = omarchyBytes
       approved = false
@@ -558,7 +705,7 @@
 
     func requestShutdown() -> Bool {
       requestShutdownCount += 1
-      return false
+      return shutdownAccepted
     }
 
     func execute(
@@ -567,6 +714,8 @@
       journal: @escaping @Sendable (Data) -> Void
     ) async throws -> CompletionDisplay {
       executeCount += 1
+      savedJournal = journal
+      await executeGate?.wait()
       lastOperation = operation
       for chunk in journalChunks {
         journal(chunk)

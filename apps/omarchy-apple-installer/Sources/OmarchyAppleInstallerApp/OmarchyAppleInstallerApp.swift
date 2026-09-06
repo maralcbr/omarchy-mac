@@ -8,6 +8,13 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
   private var instanceLease: InstallerAppInstanceLease?
 
   func applicationWillFinishLaunching(_ notification: Notification) {
+    #if !DEBUG
+      if ProcessInfo.processInfo.arguments.contains("--simulate") {
+        fputs("Simulation requires a debug build. Refusing to launch the live installer.\n", stderr)
+        NSApplication.shared.terminate(nil)
+        return
+      }
+    #endif
     do {
       let lockFile = try InstallerAppInstanceLease.defaultLockFileURL()
       instanceLease = try InstallerAppInstanceLease.acquire(at: lockFile)
@@ -49,22 +56,52 @@ struct OmarchyAppleInstallerApp: App {
   /// Testers switch to the rc channel here. The choice only picks between the
   /// two URLs already signed into this build; changing it restarts the check so
   /// nothing planned against one channel is installed from the other.
+  @State private var liveSession: InstallerSession?
+
+  private var isSimulation: Bool {
+    #if DEBUG
+      return ProcessInfo.processInfo.arguments.contains("--simulate")
+    #else
+      return false
+    #endif
+  }
+
+  @ViewBuilder
+  private var installerContent: some View {
+    #if DEBUG
+      if isSimulation {
+        SimulationDashboard()
+      } else {
+        liveContent
+      }
+    #else
+      if ProcessInfo.processInfo.arguments.contains("--simulate") {
+        ContentUnavailableView("Simulation requires a debug build", systemImage: "lock.shield")
+      } else {
+        liveContent
+      }
+    #endif
+  }
+
+  private var liveContent: some View {
+    OnePageInstallerView(
+      environment: InstallerEnvironmentFactory.make(), channel: channel,
+      onSessionAvailable: { liveSession = $0 })
+  }
+
   @State private var channel: ReleaseChannel = ReleaseChannelPreference()
     .resolve(descriptorDefault: .stable)
 
   var body: some Scene {
     WindowGroup(PlainLanguage.windowTitle) {
-      OnePageInstallerView(
-        environment: InstallerEnvironmentFactory.make(),
-        channel: channel
-      )
-      .frame(minWidth: 640, minHeight: 600)
-      .tint(OmarchyTheme.accent)
-      // The window itself takes the theme colour, title bar included, so the
-      // translucent system title bar never tints from the wallpaper behind.
-      .containerBackground(OmarchyTheme.window, for: .window)
+      installerContent
+        .frame(minWidth: 640, minHeight: 600)
+        .tint(OmarchyTheme.accent)
+        // The window itself takes the theme colour, title bar included, so the
+        // translucent system title bar never tints from the wallpaper behind.
+        .containerBackground(OmarchyTheme.window, for: .window)
     }
-    .defaultSize(width: 720, height: 660)
+    .defaultSize(width: 780, height: 850)
     .windowResizability(.contentMinSize)
     .windowStyle(.hiddenTitleBar)
     .commands {
@@ -74,6 +111,7 @@ struct OmarchyAppleInstallerApp: App {
           Text(PlainLanguage.channelRC).tag(ReleaseChannel.rc)
         }
         .pickerStyle(.inline)
+        .disabled(liveSession?.canChangeChannel != true || isSimulation)
       }
     }
   }
@@ -82,6 +120,7 @@ struct OmarchyAppleInstallerApp: App {
     Binding(
       get: { channel },
       set: { selected in
+        guard liveSession?.canChangeChannel == true && !isSimulation else { return }
         ReleaseChannelPreference().select(selected)
         channel = selected
       }
