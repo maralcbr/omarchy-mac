@@ -40,3 +40,5 @@ The recommended version in `README.md`, the root `version` file,
 by the current stable package channel must agree before a release is called
 stable. Validation scope is recorded per release; generic ARM64 VM acceptance
 must not be described as physical Apple-hardware qualification.
+
+How a release is produced, both lanes: [`../apple-silicon-deployment.md`](../apple-silicon-deployment.md).

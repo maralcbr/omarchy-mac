@@ -12,6 +12,9 @@ the Asahi platform foundation. Asahi continues to own APFS preparation,
 recoveryOS and boot policy, m1n1, U-Boot, device trees, machine firmware, and
 the Asahi kernel.
 
+The commands for every step below, both lanes, are in
+[`apple-silicon-deployment.md`](apple-silicon-deployment.md).
+
 ## 1. Assemble a private candidate
 
 1. Build only the explicit `aarch64/apple-silicon` target through the

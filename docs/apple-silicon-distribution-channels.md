@@ -143,6 +143,9 @@ implement every S3 call:
 
 ## Runbooks
 
+The end-to-end sequence, including the runtime fast lane, is
+[`apple-silicon-deployment.md`](apple-silicon-deployment.md); the sections below cover the channel tooling itself.
+
 ### Release the app
 
 ```bash
