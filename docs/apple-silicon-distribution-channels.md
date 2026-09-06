@@ -269,6 +269,7 @@ reports a mirror mid-transition as exactly that rather than as a failure.
 
 | Snapshot | Taken from | Pinned by | Notes |
 | --- | --- | --- | --- |
+| `20260906` | `ca.us.mirror.archlinuxarm.org`, 2026-09-06 | payload `2026.09.06`, acceptance of `asahi-packages-candidate-f701b12` | plain copy: ALARM's aquamarine `0.15.0-2`; hyprland/hyprtoolkit now come from `[omarchy]` (built against it), so no substitution. Made as an R2 server-side copy of `20260905` plus the 134 changed files |
 | `20260905` | `ca.us.mirror.archlinuxarm.org`, 2026-09-05 | payload `2026.09.05`, acceptance of `asahi-packages-candidate-5a3a266d` | `extra` carries `aquamarine 0.14.0-2` (provides `libaquamarine.so=13`) in place of the live `0.15.0-2`, so `hyprland 0.56.1-3` and `hyprtoolkit 0.5.4-5` resolve; the databases were regenerated with `repo-remove`/`repo-add`, every package keeps its Arch Linux ARM signature |
 
 Taking one: `rsync -rtL` each repository from a mirror's `rsync://…/archlinuxarm/aarch64/<repo>/`

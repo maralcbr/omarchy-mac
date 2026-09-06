@@ -22,7 +22,7 @@ candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$root/default/omarchy-arm-reposit
 # repositories rather than the live mirrors, so a mirror mid-transition cannot
 # fail a run that has nothing to do with it. The date is the one the current
 # payload was built against; see docs/apple-silicon-distribution-channels.md.
-alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260905/$repo/os/$arch'}
+alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260906/$repo/os/$arch'}
 
 [[ $alarm_mirror == https://* && $alarm_mirror == *'$repo'* && $alarm_mirror == *'$arch'* ]] || {
   echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL containing $repo and $arch' >&2
