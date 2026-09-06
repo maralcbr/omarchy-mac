@@ -9,7 +9,7 @@
     @State private var scenario = InstallerSimulationScenario.success
     @State private var channel = ReleaseChannel.stable
     @State private var slow = false
-    @State private var dark = false
+    @State private var dark = true
     @State private var generation = UUID()
     @State private var environment = InstallerSimulationEnvironment(scenario: .success)
     @State private var canChangeChannel = false
@@ -42,6 +42,8 @@
           .font(.caption)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(OmarchyTheme.text)
         .background(OmarchyTheme.card)
         Divider()
         OnePageInstallerView(
