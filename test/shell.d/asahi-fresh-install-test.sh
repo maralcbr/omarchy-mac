@@ -18,8 +18,10 @@ pass "fresh Asahi installer exposes the verified bundle entrypoint"
 
 grep -Fq 'omarchy-base-asahi.packages' "$installer" || fail "fresh installer reads the Asahi package closure"
 grep -Fq 'pacman -Syu --needed --noconfirm' "$installer" || fail "fresh installer resolves the runtime package transaction"
-grep -Fq -- '--ignore linux-asahi,linux-asahi-headers,m1n1' "$installer" || fail "fresh installer excludes protected Asahi boot packages from the system upgrade"
-grep -Fq '[[ $package == "linux-asahi" || $package == "linux-asahi-headers" || $package == "m1n1" ]]' "$installer" || fail "fresh installer omits protected Asahi boot packages from explicit targets"
+grep -Fq -- '--ignore "$kernel_package,$kernel_package-headers,m1n1"' "$installer" || fail "fresh installer excludes protected boot packages from the system upgrade"
+grep -Fq '$package == "$kernel_package" || $package == "$kernel_package-headers"' "$installer" || fail "fresh installer omits the installed kernel from explicit targets"
+grep -Fq '$package == "linux-asahi" || $package == "linux-asahi-headers"' "$installer" || fail "fresh installer omits the Asahi kernel from explicit targets"
+grep -Fq '$package == "m1n1"' "$installer" || fail "fresh installer omits m1n1 from explicit targets"
 grep -Fq 'pacman -U --needed --noconfirm "${archives[@]}"' "$installer" || fail "fresh installer uses one exact six-package transaction"
 if grep -Fq 'makepkg' "$installer"; then
   fail "fresh installer must not compile packages on the target machine"
