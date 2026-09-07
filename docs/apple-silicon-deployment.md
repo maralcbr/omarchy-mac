@@ -297,14 +297,25 @@ Aurora is qualified on real hardware.
 
 Delete `pkgbuilds/linux-aurora`, `pkgbuilds/aurora-*`,
 `bin/aurora-package-descriptor`, `test/aurora-package-descriptor` and
-`.github/workflows/release-aurora-package.yml` from `omarchy-pkgs`; the
-`builder/*aurora*`, `products/omarchy-mx-mac-aurora.json`,
-`*-arm-aurora.conf` and `test/unit/aurora-product-test.sh` files from
-`omarchy-iso`; and `bin/omarchy-hw-apple-kernel` plus
-`scripts/release-inputs-aurora.template.json` here. Everything else is a hook
-that defaults to the Asahi behaviour, so reverting those files restores the
-previous lane exactly. Then drop `channels/rc-aurora/` and the aurora release
-sets from R2 and the `aurora-packages-*` releases from GitHub.
+`.github/workflows/release-aurora-package.yml` from `omarchy-pkgs` (and the
+aurora ignore rule in `bin/asahi-incremental-plan`); the `builder/*aurora*`,
+`builder/branding/branding-manifest-aurora.json`,
+`products/omarchy-mx-mac-aurora.json`, `*-arm-aurora.conf` and
+`test/unit/aurora-product-test.sh` files from `omarchy-iso`; and
+`bin/omarchy-hw-apple-kernel` plus `scripts/release-inputs-aurora.template.json`
+here. Everything else is a hook that defaults to the Asahi behaviour (the
+kernel name in the builder, orchestrator and verifiers; the per-kernel branding
+manifest; the `-lane` suffix `publish-channels` accepts on release tags), so
+reverting those files restores the previous lane exactly. Then drop
+`channels/rc-aurora/` and the aurora release sets from R2 and the
+`aurora-packages-*` releases from GitHub.
+
+The m1n1 boot image embeds the kernel's device trees, so a new Aurora kernel
+also needs a new `branding-manifest-aurora.json`: rebuild the image offline as
+`m1n1.bin` + every `*.dtb` in the kernel package (sorted) + the gzip stream and
+config tail of an existing `boot.bin`, brand it with the manifest's
+replacements, and pin both digests. The same recipe reproduces the Asahi pins
+byte for byte, which is how to check it.
 
 ## Gates and timings
 
