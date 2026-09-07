@@ -159,7 +159,7 @@
           guard let identifier = envelope.identifier else { continue }
           let evidence =
             envelope.evidenceDigest.map {
-              " • evidence \(PlainLanguage.shortDigest($0))"
+              " · verification \(PlainLanguage.shortDigest($0))"
             } ?? ""
           lines.append(
             JournalFeedLine(
@@ -174,7 +174,7 @@
             JournalFeedLine(
               id: index,
               kind: .completion,
-              text: "Outcome: "
+              text: "Result: "
                 + outcome.replacingOccurrences(
                   of: "_",
                   with: " "

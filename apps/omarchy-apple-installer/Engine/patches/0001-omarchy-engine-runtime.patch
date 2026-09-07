@@ -212,3 +212,34 @@ index d99a1e1..76f9a94 100644
          try:
              osi.sys_vol_bootable = fsctl_is_bootable(mounts["System"])
          except Exception as e:
+diff --git a/src/osinstall.py b/src/osinstall.py
+--- a/src/osinstall.py
++++ b/src/osinstall.py
+@@ -127,6 +127,13 @@
+                 fd.write(data)
+             ucache.flush_progress()
+ 
++    def install_raw_image(self, image, info):
++        zinfo = self.pkg.getinfo(image)
++        if zinfo.file_size % (4 * 1024) != 0:
++            raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
++        with self.pkg.open(image) as source, open(f"/dev/r{info.name}", "r+b") as target:
++            self.fdcopy(source, target, zinfo.file_size)
++
+     def install(self, stub_ins):
+         p_progress("Installing OS...")
+         logging.info("OSInstaller.install()")
+@@ -146,12 +153,7 @@
+             if image:
+                 p_plain(f"  Extracting {image} into {info.name} partition...")
+                 logging.info(f"Extract: {image}")
+-                zinfo = self.pkg.getinfo(image)
+-                if zinfo.file_size % (4 * 1024) != 0:
+-                    raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
+-                with self.pkg.open(image) as sfd, \
+-                    open(f"/dev/r{info.name}", "r+b") as dfd:
+-                    self.fdcopy(sfd, dfd, zinfo.file_size)
++                self.install_raw_image(image, info)
+                 self.flush_progress()
+             source = part.get("source", None)
+             if source:

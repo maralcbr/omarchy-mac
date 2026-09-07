@@ -14,6 +14,7 @@ import SwiftUI
 struct CredentialSheet: View {
   let context: CredentialSheetContext
   let isSimulation: Bool
+  let approvedSize: String?
   let onCancel: () -> Void
   let onSubmit: (MachineOwnerAuthorization) -> Void
 
@@ -27,102 +28,93 @@ struct CredentialSheet: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
+    VStack(alignment: .leading, spacing: 16) {
       Text(isRetry ? PlainLanguage.authorizeRetryTitle : PlainLanguage.authorizeTitle)
-        .font(.system(size: 15, weight: .semibold))
+        .font(.system(size: 20, weight: .semibold))
         .foregroundStyle(OmarchyTheme.accent)
-        .multilineTextAlignment(.center)
-        .padding(.bottom, 14)
-
-      if context.error == .credentialsRejected {
-        Text(PlainLanguage.authorizeRejected)
-          .font(OmarchyTheme.caption)
-          .foregroundStyle(OmarchyTheme.danger)
-          .padding(.bottom, 10)
-      }
 
       Text(
         isSimulation
-          ? "Simulation uses a dummy account. Do not enter a real password."
-          : "Use the macOS account that owns this Mac. Its login password authorizes the reviewed disk changes and Recovery setup; it is not an Omarchy account password."
+          ? "This simulation uses a test account. No real password is needed."
+          : "Use a macOS account authorized to install on this Mac. Your password authorizes the disk changes you reviewed and the Recovery setup."
       )
       .font(OmarchyTheme.body)
       .fixedSize(horizontal: false, vertical: true)
-      .padding(.bottom, 14)
 
-      if !isSimulation {
-        field(
-          label: PlainLanguage.authorizeUsernameLabel,
-          reason: input.usernameReason
-        ) {
-          TextField("", text: $input.username)
-            .textFieldStyle(.roundedBorder)
-            .textContentType(.username)
-            .accessibilityLabel(PlainLanguage.authorizeUsernameLabel)
-            .autocorrectionDisabled()
-            .focused($focus, equals: .username)
-            .onSubmit { focus = .password }
-        }
-
-        field(
-          label: PlainLanguage.authorizePasswordLabel,
-          reason: input.passwordReason
-        ) {
-          SecureField("", text: $input.password)
-            .textFieldStyle(.roundedBorder)
-            .textContentType(.password)
-            .accessibilityLabel(PlainLanguage.authorizePasswordLabel)
-            .privacySensitive()
-            .focused($focus, equals: .password)
-            .onSubmit(submit)
-        }
-
-      }
-
-      if context.isVerifying, showsLongWait {
-        Text(PlainLanguage.authorizeStillWorking)
-          .font(OmarchyTheme.caption)
+      HStack {
+        Text(isRetry ? "Approved operation" : "Space for Omarchy")
           .foregroundStyle(OmarchyTheme.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
-          .padding(.top, 10)
+        Spacer()
+        Text(isRetry ? "Recovery authorization only" : approvedSize ?? "Reviewed allocation")
+          .fontWeight(.medium)
+      }
+      .font(OmarchyTheme.body)
+      .padding(12)
+      .background(OmarchyTheme.card, in: RoundedRectangle(cornerRadius: 4))
+
+      field(label: PlainLanguage.authorizeUsernameLabel, reason: input.usernameReason) {
+        TextField("", text: isSimulation ? .constant("simulation") : $input.username)
+          .textFieldStyle(.roundedBorder)
+          .textContentType(.username)
+          .accessibilityLabel(PlainLanguage.authorizeUsernameLabel)
+          .autocorrectionDisabled()
+          .focused($focus, equals: .username)
+          .onSubmit { focus = .password }
+          .disabled(isSimulation)
+      }
+      field(label: PlainLanguage.authorizePasswordLabel, reason: input.passwordReason) {
+        SecureField("", text: isSimulation ? .constant("simulation-only") : $input.password)
+          .textFieldStyle(.roundedBorder)
+          .textContentType(.password)
+          .accessibilityLabel(PlainLanguage.authorizePasswordLabel)
+          .privacySensitive()
+          .focused($focus, equals: .password)
+          .onSubmit(submit)
+          .disabled(isSimulation)
       }
 
-      HStack(spacing: 8) {
-        if context.isVerifying {
-          ProgressView()
-            .controlSize(.small)
-            .accessibilityLabel(PlainLanguage.authorizeChecking)
+      if context.isVerifying || context.error == .credentialsRejected {
+        HStack(alignment: .top, spacing: 8) {
+          if context.isVerifying {
+            ProgressView().controlSize(.small)
+            Text(
+              showsLongWait ? PlainLanguage.authorizeStillWorking : PlainLanguage.authorizeChecking)
+          } else if context.error == .credentialsRejected {
+            Image(systemName: "exclamationmark.triangle")
+            Text(PlainLanguage.authorizeRejected).foregroundStyle(OmarchyTheme.danger)
+          }
         }
+        .font(OmarchyTheme.caption)
+        .foregroundStyle(OmarchyTheme.secondaryText)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+      }
+
+      HStack(spacing: 12) {
         Spacer(minLength: 0)
-        // fixedSize keeps both buttons at their natural width: the row is
-        // narrow, and a squeezed button truncates its label.
         Button(PlainLanguage.authorizeCancel, action: cancel)
           .omarchySecondaryButton()
           .fixedSize()
           .keyboardShortcut(.cancelAction)
-          .disabled(context.isVerifying)
-        Button(
-          isRetry ? PlainLanguage.authorizeRetryAction : PlainLanguage.planInstall,
-          action: submit
-        )
-        .omarchyPrimaryButton()
-        .fixedSize()
-        .keyboardShortcut(.defaultAction)
-        .disabled(!input.isValid || context.isVerifying)
+          .focusEffectDisabled()
+        Button(isRetry ? "Authorize Recovery" : "Authorize & install", action: submit)
+          .omarchyPrimaryButton()
+          .fixedSize()
+          .keyboardShortcut(.defaultAction)
+          .disabled(!input.isValid)
       }
-      .padding(.top, 14)
+      .padding(.top, 8)
     }
     .padding(24)
-    .frame(width: 380)
+    .frame(width: 456)
     .foregroundStyle(OmarchyTheme.text)
     .background(OmarchyTheme.window)
     .disabled(context.isVerifying)
-    .animation(.easeInOut(duration: 0.2), value: context.isVerifying)
-    .animation(.easeInOut(duration: 0.2), value: context.error)
     .onAppear {
       input.username = isSimulation ? "simulation" : NSUserName()
       if isSimulation { input.password = "simulation-only" }
-      focus = input.username.isEmpty ? .username : .password
+      if !isSimulation { focus = input.username.isEmpty ? .username : .password }
     }
     // The spinner alone reads as stuck once the helper moves from checking
     // the password to preparing the package; after a few seconds say so.
@@ -137,7 +129,7 @@ struct CredentialSheet: View {
     .onChange(of: context.error) { _, error in
       if error == .credentialsRejected {
         if isSimulation { input.password = "simulation-only" }
-        focus = .password
+        if !isSimulation { focus = .password }
       }
     }
     .onDisappear {
@@ -156,9 +148,11 @@ struct CredentialSheet: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(label)
-        .font(.system(size: 11, weight: .medium))
+        .font(.system(size: 13, weight: .medium))
         .foregroundStyle(OmarchyTheme.secondaryText)
       content()
+        .controlSize(.large)
+        .frame(height: 36)
       if let reason {
         Text(reason)
           .font(.system(size: 10))
@@ -166,7 +160,7 @@ struct CredentialSheet: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.bottom, 10)
+
   }
 
   private func submit() {

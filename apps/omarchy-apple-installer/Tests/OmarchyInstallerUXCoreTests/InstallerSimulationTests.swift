@@ -6,6 +6,23 @@
 
   @MainActor
   final class InstallerSimulationTests: XCTestCase {
+    func testDiskAlignmentDoesNotClaimSelected180GBIsACapacityLimit() async throws {
+      let environment = InstallerSimulationEnvironment(scenario: .allocationAligned, delay: .zero)
+      let session = InstallerSession(environment: environment)
+      await session.inspect()
+      await session.continueToPlan()
+      session.continueToPlanReview()
+      session.setAcknowledged(true)
+      await session.replan(omarchyBytes: 180_000_000_000)
+      guard case .planReview(let plan, let acknowledged) = session.phase else {
+        return XCTFail("Expected disk review")
+      }
+      XCTAssertNotEqual(plan.omarchyBytes, 180_000_000_000)
+      XCTAssertEqual(DiskSizeInput().display(plan.omarchyBytes), "180")
+      XCTAssertNil(session.allocationNotice)
+      XCTAssertFalse(acknowledged)
+    }
+
     func testSyntheticJournalPassesRealDecoder() throws {
       let data = InstallerSimulationEnvironment.journalLines.reduce(into: Data()) { $0.append($1) }
       let transcript = try AppleInstallerTrustCore().validateEngineTranscript(data)
@@ -91,7 +108,9 @@
           guard case .awaitingRecovery = session.phase else { return XCTFail(scenario.title) }
           if scenario == .success { XCTAssertEqual(session.journal.checkpoints.count, 3) }
           XCTAssertEqual(session.shutDown(), scenario != .shutdownFailure)
-          XCTAssertTrue(try XCTUnwrap(session.shutdownMessage).contains("Simulation"))
+          XCTAssertTrue(
+            try XCTUnwrap(session.shutdownMessage).contains(
+              scenario == .shutdownFailure ? "Simulated shutdown failed" : "Simulation complete"))
         }
       }
     }

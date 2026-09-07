@@ -209,6 +209,7 @@
         journal: transcriptURL,
         additional: additionalEnvironment
       )
+      process.environment?["OMARCHY_PERFORMANCE_LOG"] = transcriptURL.path + ".performance.jsonl"
       process.currentDirectoryURL = bundle
       let inputPipe = standardInput == nil ? nil : Pipe()
       process.standardInput = inputPipe ?? FileHandle.nullDevice

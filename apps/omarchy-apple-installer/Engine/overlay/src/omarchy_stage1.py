@@ -3,6 +3,7 @@ import os
 """Resumable sequencing for Asahi-owned stage-1 mutations."""
 
 from dataclasses import dataclass
+from omarchy_image import timing
 
 
 class Stage1Error(RuntimeError):
@@ -91,7 +92,8 @@ def run_stage1(plan, journal, adapter):
             raise Stage1Error(
                 f"adapter does not implement {stage.adapter_method}"
             )
-        evidence = operation(plan)
+        with timing(stage.adapter_method):
+            evidence = operation(plan)
         if not isinstance(evidence, bytes) or not evidence:
             raise Stage1Error(
                 f"{stage.adapter_method} returned invalid evidence"
@@ -122,7 +124,7 @@ def retry_recovery_authorization(plan, journal, adapter):
         or set(journal.checkpoints) != required_checkpoints
     ):
         raise Stage1Error(
-            "Recovery retry requires completed stage-one read-back"
+            "Recovery retry requires completed stage-one installation"
         )
 
     validator = getattr(

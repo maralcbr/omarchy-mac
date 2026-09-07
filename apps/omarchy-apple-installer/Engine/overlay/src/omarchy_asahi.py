@@ -18,6 +18,9 @@ import osinstall
 import stub
 
 import omarchy_planner
+from omarchy_image import (
+    WRITE_VERIFICATION, flush_device, hash_target, open_target, timing, write_image,
+)
 
 
 TARGET = "apple-silicon-full-os"
@@ -269,6 +272,14 @@ class AsahiInPlaceRepairAdapter:
         )
 
 
+class OmarchyOSInstaller(osinstall.OSInstaller):
+    def install_raw_image(self, image, info):
+        self.image_receipts[image] = write_image(
+            self.pkg, image, info,
+            opener=self.image_opener, flush=self.image_flush,
+        )
+
+
 class AsahiStage1Adapter:
     def __init__(
         self,
@@ -278,6 +289,9 @@ class AsahiStage1Adapter:
         payload_path,
         stub_size,
         raw_partition_opener=None,
+        raw_partition_writer=None,
+        image_flush=flush_device,
+        full_readback=False,
     ):
         self.installer = installer
         self.metadata_path = metadata_path
@@ -286,6 +300,9 @@ class AsahiStage1Adapter:
         self.raw_partition_opener = (
             raw_partition_opener or self._open_raw_partition
         )
+        self.image_writer = raw_partition_writer or open_target
+        self.image_flush = image_flush
+        self.full_readback = full_readback
         self.template = None
         self.osins = None
         self.target_part = None
@@ -306,11 +323,14 @@ class AsahiStage1Adapter:
             )
         self.installer.data = metadata
         self.template = templates[0]
-        self.osins = osinstall.OSInstaller(
+        self.osins = OmarchyOSInstaller(
             self.installer.dutil,
             metadata,
             self.template,
         )
+        self.osins.image_receipts = {}
+        self.osins.image_opener = self.image_writer
+        self.osins.image_flush = self.image_flush
         if (
             plan.length_bytes
             < self.stub_size + self.osins.min_recommended_size
@@ -320,13 +340,10 @@ class AsahiStage1Adapter:
             )
         try:
             self.osins.pkg = zipfile.ZipFile(self.payload_path)
-            invalid_member = self.osins.pkg.testzip()
+            # Authenticated package admission precedes this adapter. CRC is
+            # checked during extraction; avoid a separate full expansion.
         except (OSError, zipfile.BadZipFile) as error:
             raise AsahiAdapterError("invalid Omarchy payload") from error
-        if invalid_member is not None:
-            raise AsahiAdapterError(
-                f"invalid Omarchy payload member: {invalid_member}"
-            )
         self._validate_full_os_package()
         ipsw = self.installer.choose_ipsw(
             self.template.get("supported_fw"),
@@ -601,7 +618,7 @@ class AsahiStage1Adapter:
             None,
         )
         self.installer.ins.check_volume(self.target_part)
-        if self._installed_evidence(plan) != installed_evidence:
+        if self._installed_evidence(plan, recorded=recorded) != installed_evidence:
             raise AsahiAdapterError("installed content checkpoint changed")
 
     def prepare_recovery_handoff(self, plan):
@@ -744,7 +761,7 @@ class AsahiStage1Adapter:
             separators=(",", ":"),
         ).encode("utf-8")
 
-    def _installed_evidence(self, plan):
+    def _installed_evidence(self, plan, recorded=None):
         osi = self.installer.ins.osi
         startup_volume_icon = self._verify_installed_file(
             self.template["icon"],
@@ -760,12 +777,33 @@ class AsahiStage1Adapter:
             image = partition.get("image")
             source = partition.get("source")
             if image:
-                installed_bytes, content_digest = self._verify_raw_image(
-                    image,
-                    info,
-                )
+                previous = next((item for item in (recorded or [])
+                                 if item["population"] == image), None)
+                receipt = previous or self.osins.image_receipts.get(image)
+                if receipt is None:
+                    raise AsahiAdapterError("completed image write receipt missing")
+                installed_bytes = self.osins.pkg.getinfo(image).file_size
+                if (receipt["partition_identifier"] != info.name
+                        or receipt["partition_uuid"] != info.uuid.lower()
+                        or receipt["partition_size_bytes"] != info.size
+                        or receipt["installed_bytes"] != installed_bytes
+                        or installed_bytes <= 0 or installed_bytes > info.size
+                        or re.fullmatch(r"[0-9a-f]{64}", receipt["content_sha256"]) is None):
+                    raise AsahiAdapterError("installed image receipt changed")
+                content_digest = receipt["content_sha256"]
+                verification = (previous["verification"] if previous else
+                                WRITE_VERIFICATION if image == "root.img"
+                                and not self.full_readback else "raw-prefix-sha256")
+                if verification not in (WRITE_VERIFICATION, "raw-prefix-sha256"):
+                    raise AsahiAdapterError("unknown image verification method")
+                # On exceptional Recovery retry, recheck all installed images
+                # against their recorded hashes without decompressing source.
+                if previous or image != "root.img" or self.full_readback:
+                    observed = hash_target(self.raw_partition_opener, info.name,
+                                           installed_bytes)
+                    if observed != content_digest:
+                        raise AsahiAdapterError("installed content does not match payload")
                 population = image
-                verification = "raw-prefix-sha256"
             else:
                 installed_bytes, content_digest = self._verify_copied_tree(
                     source,
@@ -1016,6 +1054,13 @@ class AsahiStage1Adapter:
         for name in required:
             if members[name].file_size <= 0:
                 raise AsahiAdapterError("empty Omarchy full-OS payload member")
+        for partition in partitions[1:]:
+            try:
+                capacity = osinstall.psize(partition["size"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise AsahiAdapterError("invalid Omarchy partition capacity") from error
+            if capacity <= 0 or members[partition["image"]].file_size > capacity:
+                raise AsahiAdapterError("Omarchy image exceeds partition capacity")
         for name in ("boot.img", "root.img"):
             if members[name].file_size % 4096 != 0:
                 raise AsahiAdapterError("Omarchy image size is not 4KiB aligned")

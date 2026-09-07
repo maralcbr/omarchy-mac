@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 import io
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -36,6 +37,9 @@ class FakeOSInstaller:
         icon = self.template.get("icon")
         if icon:
             Path(installer.icon_path).write_bytes(self.pkg.read(icon))
+        for partition, info in zip(self.template["partitions"], self.part_info):
+            if partition.get("image"):
+                self.install_raw_image(partition["image"], info)
 
 
 class FakeStubInstaller:
@@ -72,7 +76,7 @@ class FakeStubInstaller:
 sys.modules["asahi_firmware"] = SimpleNamespace(
     core=SimpleNamespace(FWPackage=object),
 )
-sys.modules["osinstall"] = SimpleNamespace(OSInstaller=FakeOSInstaller)
+sys.modules["osinstall"] = SimpleNamespace(OSInstaller=FakeOSInstaller, psize=lambda value: int(value[:-2]) * 1024**3 if value.endswith("GB") else int(value[:-1]))
 sys.modules["stub"] = SimpleNamespace(StubInstaller=FakeStubInstaller)
 sys.modules.setdefault(
     "util",
@@ -192,7 +196,7 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["verification"] for item in installed_evidence["populated_partitions"]],
-            ["copied-tree-sha256", "raw-prefix-sha256", "raw-prefix-sha256"],
+            ["copied-tree-sha256", "raw-prefix-sha256", "source-sha256-write-flushed-v1"],
         )
         self.assertEqual(
             installed_evidence["populated_partitions"][1]["content_sha256"],
@@ -312,13 +316,60 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         adapter = self._adapter(FakeInstaller(dutil))
         adapter.preflight(self.plan)
         adapter.prepare_target(self.plan)
+        adapter.install_stub_and_esp(self.plan)
         self.raw_images["disk0s6"] = b"x" * 4096
 
         with self.assertRaisesRegex(
             AsahiAdapterError,
-            "installed content differs from payload",
+            "installed content does not match payload",
         ):
-            adapter.install_stub_and_esp(self.plan)
+            adapter._installed_evidence(self.plan)
+
+    def test_fast_root_is_not_reread_but_retry_detects_corruption(self):
+        adapter = self._adapter(FakeInstaller(FakeDiskUtil([[self.free]])))
+        adapter.preflight(self.plan)
+        target = adapter.prepare_target(self.plan)
+        read = adapter.raw_partition_opener
+        def boot_only(name):
+            self.assertNotEqual(name, "disk0s7")
+            return read(name)
+        adapter.raw_partition_opener = boot_only
+        evidence = adapter.install_stub_and_esp(self.plan)
+        self.raw_images["disk0s7"] = b"x" * 4096
+        retry = self._retry_adapter(target, evidence)
+        retry.preflight(self.plan)
+        with self.assertRaisesRegex(AsahiAdapterError, "does not match payload"):
+            retry.validate_installed_checkpoint(self.plan, target, evidence)
+
+    def test_thorough_mode_reads_root(self):
+        adapter = self._adapter(FakeInstaller(FakeDiskUtil([[self.free]])))
+        adapter.full_readback = True
+        adapter.preflight(self.plan)
+        adapter.prepare_target(self.plan)
+        evidence = json.loads(adapter.install_stub_and_esp(self.plan))
+        self.assertEqual(evidence["populated_partitions"][-1]["verification"],
+                         "raw-prefix-sha256")
+        self.raw_images["disk0s7"] = b"x" * 4096
+        with self.assertRaisesRegex(AsahiAdapterError, "does not match payload"):
+            adapter._installed_evidence(self.plan)
+
+    def test_oversized_image_fails_before_disk_mutation(self):
+        metadata = json.loads(self.metadata.read_text())
+        metadata["os_list"][0]["partitions"][1]["size"] = "1024B"
+        self.metadata.chmod(0o600)
+        self.metadata.write_text(json.dumps(metadata))
+        self.metadata.chmod(0o400)
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        adapter = self._adapter(installer)
+        with self.assertRaisesRegex(AsahiAdapterError, "exceeds partition capacity"):
+            adapter.preflight(self.plan)
+        self.assertEqual(installer.dutil.resize_calls, [])
+        self.assertFalse(adapter.preflight_complete)
+
+    def test_preflight_does_not_expand_the_package(self):
+        adapter = self._adapter(FakeInstaller(FakeDiskUtil([[self.free]])))
+        with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("expanded")):
+            adapter.preflight(self.plan)
 
     def test_recovery_retry_revalidates_exact_installed_checkpoint(self):
         initial = self._adapter(FakeInstaller(FakeDiskUtil([[self.free]])))
@@ -428,11 +479,20 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         installer.dutil.mount_points = {
             "disk0s5": str(self.installed_esp),
         }
+        @contextmanager
+        def writer(name):
+            stream = io.BytesIO()
+            yield stream
+            self.raw_images[name] = stream.getvalue()
+            stream.close()
+
         return AsahiStage1Adapter(
             installer=installer,
             metadata_path=str(self.metadata),
             payload_path=str(self.payload),
             stub_size=2 * GIB,
+            raw_partition_writer=writer,
+            image_flush=lambda stream: None,
             raw_partition_opener=lambda name: io.BytesIO(
                 self.raw_images[name]
             ),

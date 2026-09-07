@@ -6,6 +6,8 @@
   /// Only constructed by the explicit --simulate launch flag. Scenario resets
   /// replace an in-memory environment; the live factory is never called.
   struct SimulationDashboard: View {
+    var onSessionAvailable: ((InstallerSession) -> Void)? = nil
+    var onColorSchemeChange: ((Bool) -> Void)? = nil
     @State private var scenario = InstallerSimulationScenario.success
     @State private var channel = ReleaseChannel.stable
     @State private var slow = false
@@ -17,7 +19,7 @@
     var body: some View {
       VStack(spacing: 0) {
         VStack(alignment: .leading, spacing: 10) {
-          Text("SIMULATION · This Mac will not be changed")
+          Text("SIMULATION · No installation changes to your Mac")
             .font(.headline)
           HStack {
             Picker("Scenario", selection: $scenario) {
@@ -30,14 +32,14 @@
           HStack {
             Picker("Test channel", selection: $channel) {
               Text("Stable").tag(ReleaseChannel.stable)
-              Text("RC").tag(ReleaseChannel.rc)
+              Text("Release candidate").tag(ReleaseChannel.rc)
             }.disabled(!canChangeChannel)
-            Toggle("Slow events", isOn: $slow)
-            Toggle("Dark appearance", isOn: $dark)
+            Toggle("Slow playback", isOn: $slow)
+            Toggle("Dark mode", isOn: $dark)
           }
           Text(scenario.guidance).font(.callout).fixedSize(horizontal: false, vertical: true)
           Text(
-            "No downloads, helper, disk writes, shutdown, or real credentials. Scenario and speed changes reset the simulated session."
+            "Test data only: no downloads, disk changes, or shutdown. Changing the scenario or speed restarts the simulation."
           )
           .font(.caption)
         }
@@ -48,11 +50,13 @@
         Divider()
         OnePageInstallerView(
           environment: environment, channel: channel,
-          onChannelAvailability: { canChangeChannel = $0 }
+          onChannelAvailability: { canChangeChannel = $0 },
+          onSessionAvailable: { onSessionAvailable?($0) }
         )
         .id(generation)
       }
       .preferredColorScheme(dark ? .dark : .light)
+      .onChange(of: dark) { _, value in onColorSchemeChange?(value) }
       .onChange(of: scenario) { _, _ in reset() }
       .onChange(of: slow) { _, _ in reset() }
       .onChange(of: channel) { _, _ in reset() }

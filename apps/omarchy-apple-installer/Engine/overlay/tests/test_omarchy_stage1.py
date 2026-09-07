@@ -179,7 +179,7 @@ class Stage1CoordinatorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             Stage1Error,
-            "Recovery retry requires completed stage-one read-back",
+            "Recovery retry requires completed stage-one installation",
         ):
             retry_recovery_authorization(
                 self.plan,

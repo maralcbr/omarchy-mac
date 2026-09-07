@@ -1,5 +1,6 @@
 #if os(macOS)
   import Foundation
+  import Darwin
 
   public enum EngineHandoffOperation: String, Equatable, Sendable {
     case install
@@ -32,7 +33,11 @@
     private let credentialValidator: any MachineOwnerCredentialValidating
     private let executor: any ImportedEngineHandoffExecuting
     private let importer: EngineHandoffPackageImporter
+    private let removalDisks: any RemovalDiskOperating
+    private let removalAdminValidator: @Sendable (MachineOwnerAuthorization) throws -> Void
     private var isExecuting = false
+    private var removalPlan:
+      (ticket: OmarchyRemovalTicket, plan: OmarchyRemovalPlan, expires: Date)?
 
     public init(
       workingDirectory: URL,
@@ -44,6 +49,122 @@
       self.executor = executor
       self.credentialValidator = credentialValidator
       importer = EngineHandoffPackageImporter()
+      removalDisks = MacRemovalDiskOperator()
+      removalAdminValidator = requireRemovalAdministrator
+    }
+
+    init(
+      workingDirectory: URL, executor: any ImportedEngineHandoffExecuting,
+      credentialValidator: any MachineOwnerCredentialValidating,
+      removalDisks: any RemovalDiskOperating,
+      removalAdminValidator: @escaping @Sendable (MachineOwnerAuthorization) throws -> Void
+    ) {
+      self.workingDirectory = workingDirectory
+      self.executor = executor
+      self.credentialValidator = credentialValidator
+      importer = EngineHandoffPackageImporter()
+      self.removalDisks = removalDisks
+      self.removalAdminValidator = removalAdminValidator
+    }
+
+    public func removal(
+      ticketID: UUID?, confirmation: String, authorization: MachineOwnerAuthorization?
+    ) async throws -> OmarchyRemovalReply {
+      guard !isExecuting else { throw ClosedEngineHelperError.busy }
+      try requireNoInterruptedRemoval()
+      isExecuting = true
+      defer { isExecuting = false }
+      let disks = removalDisks
+      let validateAdministrator = removalAdminValidator
+      if ticketID == nil {
+        removalPlan = nil
+        let plan = try await Task.detached {
+          try OmarchyRemovalPlan(snapshot: disks.snapshot())
+        }.value
+        let ticket = OmarchyRemovalTicket(
+          id: UUID(), reclaimBytes: plan.reclaimBytes, macOSBytesAfter: plan.targetMacOSBytes)
+        removalPlan = (ticket, plan, Date().addingTimeInterval(300))
+        return OmarchyRemovalReply(
+          ticket: ticket, message: "The installation and all its data will be permanently deleted.")
+      }
+      guard confirmation == OmarchyRemovalTicket.confirmation,
+        let authorization, let approved = removalPlan,
+        approved.ticket.id == ticketID, approved.expires > Date()
+      else {
+        throw RemovalFailure(
+          message:
+            "The confirmation is incorrect or has expired. Close this window and review removal again. Nothing was changed."
+        )
+      }
+      // One use only, including failures. A fresh review must obtain a new plan.
+      removalPlan = nil
+      let validator = credentialValidator
+      let workingDirectory = self.workingDirectory
+      let journalURL = workingDirectory.appendingPathComponent(
+        "removal-\(approved.ticket.id.uuidString).json")
+      return await Task.detached {
+        var phase = "checking"
+        do {
+          do { try validator.validate(authorization) } catch {
+            throw RemovalFailure(message: "The macOS account or password was not accepted.")
+          }
+          try validateAdministrator(authorization)
+          let executor = OmarchyRemovalExecutor(disks: disks)
+          try executor.execute(approved.plan) { next in
+            // The private journal is durable before each mutation, without credentials.
+            let journal = RemovalJournal(plan: approved.plan, phase: next)
+            try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
+            let file = try FileHandle(forWritingTo: journalURL)
+            try file.synchronize()
+            try file.close()
+            let directory = open(workingDirectory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard directory >= 0 else {
+              throw RemovalFailure(message: "The removal journal could not be saved.")
+            }
+            defer { Darwin.close(directory) }
+            guard fsync(directory) == 0 else {
+              throw RemovalFailure(message: "The removal journal could not be saved.")
+            }
+            phase = next
+          }
+          return OmarchyRemovalReply(
+            completed: true,
+            message: "Omarchy and its data have been removed. The freed space is now part of macOS."
+          )
+        } catch {
+          let detail = (error as? RemovalFailure)?.message ?? "macOS could not complete removal."
+          let message: String
+          if phase == "checking" {
+            message = "\(detail) No disk changes were made."
+          } else if phase == "returning-space-to-macos" || phase == "complete" {
+            message =
+              "Omarchy was removed, but returning its space to macOS could not be confirmed. The space may still be unallocated. \(detail) Do not repeat deletion; the removal journal was kept for recovery."
+          } else {
+            message =
+              "Removal stopped and some Omarchy data may already be deleted. \(detail) Do not repeat deletion; the removal journal was kept for recovery."
+          }
+          return OmarchyRemovalReply(requiresReview: phase != "checking", message: message)
+        }
+      }.value
+    }
+
+    private func requireNoInterruptedRemoval() throws {
+      let entries = try FileManager.default.contentsOfDirectory(
+        at: workingDirectory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+      for entry in entries
+      where entry.lastPathComponent.hasPrefix("removal-") && entry.pathExtension == "json" {
+        let properties = try entry.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard properties.isRegularFile == true, properties.isSymbolicLink != true,
+          let journal = try? JSONDecoder().decode(
+            RemovalJournal.self, from: Data(contentsOf: entry)),
+          journal.phase == "complete"
+        else {
+          throw RemovalFailure(
+            message:
+              "An earlier removal did not finish. Review the saved removal journal and disk layout before making further disk changes."
+          )
+        }
+      }
     }
 
     /// `progress` is optional and advisory: when a connected app exports the
@@ -58,19 +179,21 @@
       guard !isExecuting else {
         throw ClosedEngineHelperError.busy
       }
+      try requireNoInterruptedRemoval()
       isExecuting = true
       defer { isExecuting = false }
 
       do {
-        try credentialValidator.validate(authorization)
+        try InstallerPerformance.measure("credential_validation") {
+          try credentialValidator.validate(authorization)
+        }
       } catch {
         throw ClosedEngineHelperError.invalidMachineOwnerCredentials
       }
 
-      let package = try importer.prepare(
-        from: packageDirectory,
-        in: workingDirectory
-      )
+      let package = try InstallerPerformance.measure("helper_import") {
+        try importer.prepare(from: packageDirectory, in: workingDirectory)
+      }
       defer { try? FileManager.default.removeItem(at: package.packageURL) }
 
       guard
@@ -134,6 +257,11 @@
     }
   }
 
+  private struct RemovalJournal: Codable {
+    let plan: OmarchyRemovalPlan
+    let phase: String
+  }
+
   public final class ClosedEngineXPCServiceEndpoint:
     NSObject, ClosedEngineXPCService
   {
@@ -145,6 +273,32 @@
 
     public func ping(reply: @escaping @Sendable (Bool) -> Void) {
       reply(true)
+    }
+
+    public func removal(
+      ticket: String, confirmation: String, machineOwner: String, password: Data,
+      reply: @escaping @Sendable (Data?, NSError?) -> Void
+    ) {
+      let server = server
+      Task {
+        do {
+          guard ticket.isEmpty || UUID(uuidString: ticket) != nil,
+            confirmation.utf8.count <= 256
+          else { throw ClosedEngineHelperError.invalidOperation }
+          let authorization =
+            ticket.isEmpty
+            ? nil : try MachineOwnerAuthorization(username: machineOwner, password: password)
+          let result = try await server.removal(
+            ticketID: UUID(uuidString: ticket), confirmation: confirmation,
+            authorization: authorization)
+          reply(try JSONEncoder().encode(result), nil)
+        } catch {
+          let message =
+            (error as? RemovalFailure)?.message
+            ?? "The helper could not prepare removal. Make sure this version of the app and its helper are installed and no installation is running."
+          reply(try? JSONEncoder().encode(OmarchyRemovalReply(message: message)), nil)
+        }
+      }
     }
 
     public func submit(

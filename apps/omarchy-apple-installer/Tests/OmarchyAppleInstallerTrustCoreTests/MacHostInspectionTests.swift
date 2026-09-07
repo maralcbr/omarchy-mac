@@ -35,7 +35,7 @@
       XCTAssertEqual(
         result.eligibility,
         .blocked(
-          reason: "The current Asahi installer does not support this Apple model."
+          reason: "This installer doesn’t support this Mac model yet."
         )
       )
     }

@@ -18,6 +18,7 @@ enum OmarchyTheme {
   static let track = dynamic(light: 0xD0_D5E3, dark: 0x2F_334D)
   static let accent = dynamic(light: 0x2E_7DE9, dark: 0x7A_A2F7)
   static let accentText = dynamic(light: 0xFF_FFFF, dark: 0x1A_1B26)
+  static let success = dynamic(light: 0x48_5E30, dark: 0x9E_Cb6B)
   static let danger = dynamic(light: 0xF5_2A65, dark: 0xF7_768E)
   static let caution = dynamic(light: 0x8C_6C3E, dark: 0xE0_AF68)
 

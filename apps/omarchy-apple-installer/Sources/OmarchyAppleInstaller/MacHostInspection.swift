@@ -80,11 +80,11 @@
 
       if Self.explicitlyUnsupportedDevices.contains(identity.deviceIdentifier) {
         eligibility = .blocked(
-          reason: "The current Asahi installer does not support this Apple model."
+          reason: "This installer doesn’t support this Mac model yet."
         )
       } else if !storage.isInternal {
         eligibility = .blocked(
-          reason: "Installation preparation requires the internal APFS system store."
+          reason: "Start this installer from macOS on your Mac’s internal storage."
         )
       } else {
         eligibility = .requiresSignedCatalog

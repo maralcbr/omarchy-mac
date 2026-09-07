@@ -27,9 +27,9 @@
       XCTAssertEqual(model.completion, .awaitingRecovery)
       XCTAssertEqual(model.stageFractions, [1, 1, 1])
       XCTAssertEqual(model.stageIndex, 2)
-      XCTAssertTrue(titles.contains("Preparing space…"))
+      XCTAssertTrue(titles.contains("Preparing disk space…"))
       XCTAssertTrue(titles.contains("Writing boot files…"))
-      XCTAssertTrue(titles.contains("Handing off to Recovery…"))
+      XCTAssertTrue(titles.contains("Preparing the Recovery step…"))
       XCTAssertEqual(model.feed.count, 7)
       XCTAssertEqual(model.feed.last?.kind, .completion)
     }

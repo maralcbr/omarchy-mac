@@ -5,6 +5,16 @@ import SwiftUI
 
 @MainActor
 private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegate {
+  static var removalInProgress = false
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if Self.removalInProgress {
+      NSSound.beep()
+      return .terminateCancel
+    }
+    return .terminateNow
+  }
+
   private var instanceLease: InstallerAppInstanceLease?
 
   func applicationWillFinishLaunching(_ notification: Notification) {
@@ -57,6 +67,10 @@ struct OmarchyAppleInstallerApp: App {
   /// two URLs already signed into this build; changing it restarts the check so
   /// nothing planned against one channel is installed from the other.
   @State private var liveSession: InstallerSession?
+  @State private var showsRemoval = false
+  @State private var removalNeedsReview = false
+  @State private var simulationDark = true
+  @State private var generation = UUID()
 
   private var isSimulation: Bool {
     #if DEBUG
@@ -70,13 +84,15 @@ struct OmarchyAppleInstallerApp: App {
   private var installerContent: some View {
     #if DEBUG
       if isSimulation {
-        SimulationDashboard()
+        SimulationDashboard(
+          onSessionAvailable: { liveSession = $0 }, onColorSchemeChange: { simulationDark = $0 })
       } else {
         liveContent
       }
     #else
       if ProcessInfo.processInfo.arguments.contains("--simulate") {
-        ContentUnavailableView("Simulation requires a debug build", systemImage: "lock.shield")
+        ContentUnavailableView(
+          "Simulation is available in debug builds only.", systemImage: "lock.shield")
       } else {
         liveContent
       }
@@ -94,24 +110,63 @@ struct OmarchyAppleInstallerApp: App {
 
   var body: some Scene {
     WindowGroup(PlainLanguage.windowTitle) {
-      installerContent
-        .frame(minWidth: 640, minHeight: 600)
-        .tint(OmarchyTheme.accent)
-        // The window itself takes the theme colour, title bar included, so the
-        // translucent system title bar never tints from the wallpaper behind.
-        .containerBackground(OmarchyTheme.window, for: .window)
+      Group {
+        if removalNeedsReview {
+          VStack {
+            ContentUnavailableView(
+              "Removal needs review", systemImage: "externaldrive.badge.exclamationmark",
+              description: Text(
+                "Check the removal journal and disk layout before making further disk changes."))
+            #if DEBUG
+              if isSimulation {
+                Button("Reset simulation") {
+                  removalNeedsReview = false
+                  generation = UUID()
+                }
+                .omarchySecondaryButton().padding(.bottom, 24)
+              }
+            #endif
+          }
+        } else {
+          installerContent
+        }
+      }
+      .id(generation)
+      .disabled(showsRemoval)
+      .sheet(isPresented: $showsRemoval, onDismiss: { generation = UUID() }) {
+        OmarchyRemovalSheet(
+          isSimulation: isSimulation,
+          onBusyChanged: { busy in
+            InstallerApplicationDelegate.removalInProgress = busy
+            for window in NSApp.windows where window.sheetParent == nil {
+              window.standardWindowButton(.closeButton)?.isEnabled = !busy
+            }
+          }, onClose: { showsRemoval = false }, onRequiresReview: { removalNeedsReview = true })
+      }
+      .preferredColorScheme(isSimulation ? (simulationDark ? .dark : .light) : nil)
+      .frame(minWidth: 640)
+      .tint(OmarchyTheme.accent)
+      // The window itself takes the theme colour, title bar included, so the
+      // translucent system title bar never tints from the wallpaper behind.
+      .containerBackground(OmarchyTheme.window, for: .window)
     }
-    .defaultSize(width: 780, height: 850)
-    .windowResizability(.contentMinSize)
+    .defaultSize(width: 780, height: 600)
+    .windowResizability(.contentSize)
     .windowStyle(.hiddenTitleBar)
     .commands {
+      CommandMenu("Installation") {
+        Button("Remove Omarchy…") { showsRemoval = true }
+          .disabled(removalNeedsReview || showsRemoval || liveSession?.canChangeChannel != true)
+      }
       CommandMenu(PlainLanguage.channelMenuTitle) {
         Picker(PlainLanguage.channelMenuTitle, selection: channelBinding) {
           Text(PlainLanguage.channelStable).tag(ReleaseChannel.stable)
           Text(PlainLanguage.channelRC).tag(ReleaseChannel.rc)
         }
         .pickerStyle(.inline)
-        .disabled(liveSession?.canChangeChannel != true || isSimulation)
+        .disabled(
+          removalNeedsReview || showsRemoval || liveSession?.canChangeChannel != true
+            || isSimulation)
       }
     }
   }

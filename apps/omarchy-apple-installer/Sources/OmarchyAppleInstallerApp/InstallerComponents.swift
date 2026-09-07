@@ -91,18 +91,12 @@ struct DiskBar: View {
       ZStack(alignment: .leading) {
         HStack(spacing: 0) {
           segment(
-            name: "macOS",
-            bytes: macOSBytes,
-            width: width * Double(macOSBytes) / total,
+            name: unallocatedBytes > 0 ? "macOS and free space" : "macOS",
+            bytes: macOSBytes + unallocatedBytes,
+            width: width - omarchyWidth,
             background: OmarchyTheme.track,
             foreground: OmarchyTheme.secondaryText
           )
-          if unallocatedBytes > 0 {
-            segment(
-              name: "Unallocated", bytes: unallocatedBytes,
-              width: width * Double(unallocatedBytes) / total,
-              background: OmarchyTheme.window, foreground: OmarchyTheme.secondaryText)
-          }
           segment(
             name: "Omarchy",
             bytes: omarchyBytes,
@@ -142,7 +136,7 @@ struct DiskBar: View {
     .frame(height: 24)
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Disk allocation")
+    .accessibilityLabel("Disk space")
     .accessibilityValue(
       "macOS \(PlainLanguage.bytes(macOSBytes)), Omarchy \(PlainLanguage.bytes(omarchyBytes)), unallocated \(PlainLanguage.bytes(unallocatedBytes))"
     )
@@ -168,7 +162,7 @@ struct DiskBar: View {
   ) -> some View {
     ZStack {
       background
-      // Just the amount of space; the colour says which side is which.
+      // Center each live capacity in the full area on its side of the handle.
       Text(PlainLanguage.bytes(bytes))
         .accessibilityLabel(name + " " + PlainLanguage.bytes(bytes))
         .font(.system(size: 10.5, weight: .semibold))

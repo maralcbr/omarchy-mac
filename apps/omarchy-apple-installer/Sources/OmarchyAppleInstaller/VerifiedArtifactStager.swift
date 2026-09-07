@@ -237,18 +237,22 @@ public struct VerifiedArtifactStager: Sendable {
 
   private let downloader: any ArtifactDownloading
   private let promoter: AtomicArtifactFilePromoter
+  private let bundledEngineDirectory: URL?
 
   public init() {
     downloader = ProgressReportingArtifactDownloader()
     promoter = AtomicArtifactFilePromoter()
+    bundledEngineDirectory = Bundle.main.resourceURL?.appendingPathComponent("Engine/artifacts")
   }
 
   init(
     downloader: any ArtifactDownloading,
-    promoter: AtomicArtifactFilePromoter = AtomicArtifactFilePromoter()
+    promoter: AtomicArtifactFilePromoter = AtomicArtifactFilePromoter(),
+    bundledEngineDirectory: URL? = nil
   ) {
     self.downloader = downloader
     self.promoter = promoter
+    self.bundledEngineDirectory = bundledEngineDirectory
   }
 
   public func stage(
@@ -281,6 +285,26 @@ public struct VerifiedArtifactStager: Sendable {
         fileURL: destination,
         reusedExistingFile: true,
         materialization: .reusedExistingFile
+      )
+    }
+
+    if artifact.role == "engine", artifact.parts.isEmpty,
+      let source = bundledEngineDirectory?.appendingPathComponent(artifact.fileName),
+      fileManager.fileExists(atPath: source.path)
+    {
+      // Bundled engines still have to match the authenticated catalog exactly.
+      try verify(artifact, at: source)
+      let pending = stagingDirectory.appendingPathComponent(".pending-\(UUID().uuidString)")
+      defer { try? fileManager.removeItem(at: pending) }
+      try fileManager.copyItem(at: source, to: pending)
+      try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: pending.path)
+      try verify(artifact, at: pending)
+      try fileManager.moveItem(at: pending, to: destination)
+      report(
+        progress, artifact: artifact, phase: .verified, bytesCompleted: artifact.expectedSizeBytes)
+      return StagedInstallerArtifact(
+        artifact: artifact, fileURL: destination, reusedExistingFile: false,
+        materialization: .verifiedCopyFallback
       )
     }
 

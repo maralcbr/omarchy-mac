@@ -89,7 +89,8 @@
 
     public func prepare(
       _ request: InstallerAssetPreparationRequest,
-      progress: ArtifactStagingProgressHandler? = nil
+      progress: ArtifactStagingProgressHandler? = nil,
+      previouslyPrepared: PreparedInstallerAssets? = nil
     ) async throws -> PreparedInstallerAssets {
       let deviceIdentifier = try validateHost(request.host)
 
@@ -119,6 +120,33 @@
       }
       guard let delivery = installer.delivery else {
         throw InstallerAssetPreparationError.deliveryMetadataUnavailable
+      }
+
+      if let previous = previouslyPrepared, previous.installer == installer {
+        let artifacts =
+          [previous.engine, previous.metadata, previous.payload]
+          + (previous.repairManifest.map { [$0] } ?? [])
+        let available = artifacts.allSatisfy { staged in
+          guard
+            staged.fileURL.deletingLastPathComponent().standardizedFileURL
+              == request.stagingDirectory.standardizedFileURL,
+            let values = try? staged.fileURL.resourceValues(forKeys: [
+              .isRegularFileKey, .fileSizeKey,
+            ]),
+            values.isRegularFile == true,
+            let size = values.fileSize, size >= 0
+          else { return false }
+          return UInt64(size) == staged.artifact.expectedSizeBytes
+        }
+        if available {
+          // Reuse for planning only. Handoff and root import still verify bytes.
+          return PreparedInstallerAssets(
+            catalogIdentity: catalog.acceptedIdentity, installer: installer,
+            engine: previous.engine, metadata: previous.metadata, payload: previous.payload,
+            repairManifest: previous.repairManifest,
+            installerCompatibility: catalog.installerCompatibility
+          )
+        }
       }
 
       async let engine = stager.stage(

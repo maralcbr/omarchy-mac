@@ -9,6 +9,11 @@
     /// seconds instead of leaving a request queued forever.
     func ping(reply: @escaping @Sendable (Bool) -> Void)
 
+    func removal(
+      ticket: String, confirmation: String, machineOwner: String, password: Data,
+      reply: @escaping @Sendable (Data?, NSError?) -> Void
+    )
+
     func submit(
       packageDirectory: FileHandle,
       operation: String,
@@ -112,6 +117,49 @@
       guard answered else {
         throw EngineXPCSubmissionError.helperUnresponsive
       }
+    }
+
+    public func removal(
+      ticket: OmarchyRemovalTicket? = nil, confirmation: String = "",
+      authorization: MachineOwnerAuthorization? = nil
+    ) async throws -> OmarchyRemovalReply {
+      try await ping()
+      let connection = makeConnection()
+      let handle = SendableXPCConnection(connection)
+      let data: Data = try await withCheckedThrowingContinuation { continuation in
+        let gate = EngineXPCReplyGate(continuation: continuation)
+        connection.interruptionHandler = {
+          gate.resume(throwing: EngineXPCSubmissionError.connectionFailed)
+        }
+        connection.invalidationHandler = {
+          gate.resume(throwing: EngineXPCSubmissionError.connectionFailed)
+        }
+        connection.activate()
+        guard
+          let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in
+            gate.resume(throwing: EngineXPCSubmissionError.connectionFailed)
+            handle.invalidate()
+          }) as? ClosedEngineXPCService
+        else {
+          gate.resume(throwing: EngineXPCSubmissionError.connectionFailed)
+          handle.invalidate()
+          return
+        }
+        proxy.removal(
+          ticket: ticket?.id.uuidString ?? "", confirmation: confirmation,
+          machineOwner: authorization?.username ?? "", password: authorization?.password ?? Data()
+        ) { response, error in
+          defer { handle.invalidate() }
+          if let error {
+            gate.resume(throwing: error)
+          } else if let response {
+            gate.resume(returning: response)
+          } else {
+            gate.resume(throwing: EngineXPCSubmissionError.emptyResponse)
+          }
+        }
+      }
+      return try JSONDecoder().decode(OmarchyRemovalReply.self, from: data)
     }
 
     public func submit(

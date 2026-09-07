@@ -46,12 +46,20 @@
     private var isExecuting = false
     private var operationID = UUID()
     public private(set) var planRevision = 0
+    public private(set) var isEditingSize = false
+
+    public func setSizeEditing(_ editing: Bool) {
+      guard !isBusy && !isExecuting, case .planReview = phase else { return }
+      isEditingSize = editing
+    }
     public private(set) var allocationNotice: String?
     public private(set) var shutdownMessage: String?
 
     public var isSimulation: Bool { environment.isSimulation }
     public var canInspect: Bool { !isBusy && !isExecuting && !hasExecutionStarted }
-    public var canChangeChannel: Bool { canInspect && credentialSheet.context == nil }
+    public var canChangeChannel: Bool {
+      canInspect && !isEditingSize && credentialSheet.context == nil
+    }
     public var canEditPlan: Bool {
       guard case .awaitingInstall = phase else { return false }
       return canInspect && credentialSheet.context == nil
@@ -216,12 +224,9 @@
         switch outcome {
         case .plan(let plan):
           planRevision += 1
-          allocationNotice =
-            omarchyBytes.map { requested in
-              requested == plan.omarchyBytes
-                ? nil
-                : "The available space allows \(PlainLanguage.bytes(plan.omarchyBytes)), adjusted from \(PlainLanguage.bytes(requested)). Review this allocation before installing."
-            } ?? nil
+          allocationNotice = omarchyBytes.flatMap {
+            PlainLanguage.allocationNotice(requestedBytes: $0, actualBytes: plan.omarchyBytes)
+          }
           let lastUpdate: AssetProgressUpdate =
             if case .preparingPlan(let update) = phase {
               update
@@ -299,7 +304,8 @@
     }
 
     public func approve() {
-      guard !isBusy && !isExecuting, case .planReview(let plan, let acknowledged) = phase,
+      guard !isBusy && !isExecuting && !isEditingSize,
+        case .planReview(let plan, let acknowledged) = phase,
         acknowledged
       else {
         return
@@ -316,7 +322,7 @@
           FailureDisplay(
             headline: PlainLanguage.planChangedBeforeApproval,
             plainDetail:
-              "Nothing was authorized. The disk must be inspected and planned again.",
+              "The plan needs a new disk check. Nothing was authorized.",
             technicalDetail: String(describing: error)
           )
         )
@@ -396,7 +402,7 @@
             FailureDisplay(
               headline: PlainLanguage.approvalUnavailable,
               plainDetail:
-                "Nothing was authorized. Inspect this Mac and review the plan again."
+                "Check this Mac and review the plan again. Nothing was authorized."
             )
           )
           return
@@ -409,7 +415,7 @@
             FailureDisplay(
               headline: PlainLanguage.retryCheckpointUnavailable,
               plainDetail:
-                "Nothing was authorized. The installation remains stopped."
+                "Authorization wasn’t granted. Installation remains stopped."
             )
           )
           return
@@ -529,11 +535,11 @@
       shutdownMessage =
         isSimulation
         ? (accepted
-          ? "Simulation: shutdown request accepted. This Mac stays on."
-          : "Simulation: shutdown failed. The instructions remain available.")
+          ? "Simulation complete: shutdown would begin now. Your Mac stays on."
+          : "Simulated shutdown failed. You can still use the Recovery steps below.")
         : (accepted
-          ? "Shutdown requested. If another app cancels it, use Apple menu → Shut Down when ready."
-          : "Could not request shutdown. Save your work, then choose Apple menu → Shut Down. Keep these instructions for the next step.")
+          ? "Shutdown requested. If another app stops it, save your work and choose Apple menu → Shut Down."
+          : "Your Mac couldn’t shut down. Save your work, then choose Apple menu → Shut Down. Keep the Recovery steps handy.")
       return accepted
     }
 
@@ -550,9 +556,9 @@
       case .manualRecovery:
         phase = .failed(
           FailureDisplay(
-            headline: "The installation stopped safely",
+            headline: "The installer encountered an error",
             plainDetail: PlainLanguage.nextActionMessage(.manualRecovery),
-            remedy: "Review the last trusted checkpoint before continuing."
+            remedy: "Check the last verified installation step before continuing."
           )
         )
       }
@@ -587,6 +593,7 @@
     /// progress, latch, or credential state may survive a re-inspection.
     private func resetForInspection() {
       environment.discardApproval()
+      isEditingSize = false
       shutdownMessage = nil
       allocationNotice = nil
       stagingProgress = [:]
@@ -600,6 +607,7 @@
 
     /// Mirrors the field resets of `prepareSignedPlan()`.
     private func resetForPlanPreparation() {
+      isEditingSize = false
       environment.discardApproval()
       stagingProgress = [:]
       journal.reset()

@@ -45,6 +45,53 @@ final class VerifiedArtifactStagerTests: XCTestCase {
     )
   }
 
+  func testBundledEngineIsVerifiedWithoutDownloadAndRemainsInBundle() async throws {
+    let data = Data("bundled engine".utf8)
+    let artifact = try descriptor(data: data)
+    let root = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bundle = root.appendingPathComponent("bundle")
+    try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+    let source = bundle.appendingPathComponent(artifact.fileName)
+    try data.write(to: source)
+    let downloader = FixtureArtifactDownloader(data: Data("must not download".utf8))
+    let result = try await VerifiedArtifactStager(
+      downloader: downloader, bundledEngineDirectory: bundle
+    ).stage(artifact, in: root.appendingPathComponent("staging"))
+    XCTAssertEqual(try Data(contentsOf: result.fileURL), data)
+    XCTAssertEqual(try Data(contentsOf: source), data)
+    let count = await downloader.downloadCount
+    XCTAssertEqual(count, 0)
+    try Data("tampered bytes".utf8).write(to: source)
+    await assertThrows(
+      try await VerifiedArtifactStager(downloader: downloader, bundledEngineDirectory: bundle)
+        .stage(artifact, in: root.appendingPathComponent("other-staging"))
+    ) { error in
+      guard case .digestMismatch = error as? ArtifactStageError else {
+        return XCTFail("Expected digest mismatch, got \(error)")
+      }
+    }
+  }
+
+  func testPayloadStillDownloadsWhenSameNamedFileIsBundled() async throws {
+    let data = Data("OS payload".utf8)
+    let root = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let artifact = try PinnedInstallerArtifact(
+      role: "payload", sourceURL: URL(string: "https://example.com/os.zip")!,
+      fileName: "os.zip", expectedDigest: digest(data), expectedSizeBytes: UInt64(data.count)
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try data.write(to: root.appendingPathComponent("os.zip"))
+    let downloader = FixtureArtifactDownloader(data: data)
+    let result = try await VerifiedArtifactStager(
+      downloader: downloader, bundledEngineDirectory: root
+    ).stage(artifact, in: root.appendingPathComponent("staging"))
+    XCTAssertEqual(try Data(contentsOf: result.fileURL), data)
+    let count = await downloader.downloadCount
+    XCTAssertEqual(count, 1)
+  }
+
   func testExactExistingArtifactIsReusedWithoutDownload() async throws {
     let data = Data("pinned installer payload".utf8)
     let downloader = FixtureArtifactDownloader(data: data)

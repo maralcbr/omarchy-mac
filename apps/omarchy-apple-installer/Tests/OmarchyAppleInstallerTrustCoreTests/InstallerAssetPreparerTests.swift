@@ -28,6 +28,28 @@
       XCTAssertEqual(maximumConcurrentDownloads, 3)
     }
 
+    func testReplanReusesAssetsButStillRejectsExpiredCatalog() async throws {
+      let fixture = try makeFixture(schemaVersion: 2)
+      let directory = temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let request = fixture.request(stagingDirectory: directory)
+      let first = try await fixture.preparer.prepare(request)
+      let second = try await fixture.preparer.prepare(request, previouslyPrepared: first)
+      XCTAssertEqual(first.payload.fileURL, second.payload.fileURL)
+      let expired = InstallerAssetPreparationRequest(
+        host: request.host, catalogPayload: request.catalogPayload,
+        catalogSignature: request.catalogSignature, trustRoot: request.trustRoot,
+        validationTime: now.addingTimeInterval(365 * 86400),
+        stagingDirectory: directory
+      )
+      do {
+        _ = try await fixture.preparer.prepare(expired, previouslyPrepared: first)
+        XCTFail("Reused assets must not bypass current catalog validation")
+      } catch {}
+      let count = await fixture.downloader.downloadCount
+      XCTAssertEqual(count, 3)
+    }
+
     func testSignedRepairCatalogStagesExactRepairManifest() async throws {
       let fixture = try makeFixture(schemaVersion: 3)
       let directory = temporaryDirectory()

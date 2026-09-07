@@ -5,55 +5,56 @@
   public enum InstallerSimulationScenario: String, CaseIterable, Identifiable, Sendable {
     case success, freeSpace, unsupported, engineUnavailable, existingInstall, missingHelper
     case downloadFailure, invalidDownload, outdatedInstaller, emptyChannel, planFailure
-    case allocationClamped, approvalChanged, credentialsRejected, connectionLost
+    case allocationClamped, allocationAligned, approvalChanged, credentialsRejected, connectionLost
     case emptyReply, helperFailure, degradedProgress, recoveryRetry, manualRecovery
     case shutdownFailure, completed, installationMedia
 
     public var id: String { rawValue }
     public var title: String {
       switch self {
-      case .success: "Successful install and Recovery"
-      case .freeSpace: "Large free extent · preserve macOS"
+      case .success: "Successful installation → Recovery"
+      case .freeSpace: "Free space available · retain macOS"
       case .unsupported: "Unsupported Mac"
       case .engineUnavailable: "Engine unavailable"
       case .existingInstall: "Existing installation"
-      case .missingHelper: "Missing helper"
+      case .missingHelper: "Installation service missing"
       case .downloadFailure: "Download interrupted"
       case .invalidDownload: "Download verification failed"
-      case .outdatedInstaller: "Installer out of date"
+      case .outdatedInstaller: "Outdated installer"
       case .emptyChannel: "Empty release channel"
-      case .planFailure: "No eligible disk space"
-      case .allocationClamped: "Disk limit changes during replan"
+      case .planFailure: "Not enough usable space"
+      case .allocationClamped: "Disk size adjusted during review"
+      case .allocationAligned: "Disk alignment · whole GB unchanged"
       case .approvalChanged: "Plan changes before approval"
-      case .credentialsRejected: "First credentials rejected"
-      case .connectionLost: "Connection lost after disk checkpoint"
-      case .emptyReply: "Helper returns no outcome"
-      case .helperFailure: "Helper fails after disk checkpoint"
+      case .credentialsRejected: "Credentials rejected on first attempt"
+      case .connectionLost: "Connection lost after a disk change"
+      case .emptyReply: "Installation result missing"
+      case .helperFailure: "Installation service fails after a disk change"
       case .degradedProgress: "Live progress interrupted"
       case .recoveryRetry: "Recovery fails, then retry succeeds"
       case .manualRecovery: "Manual recovery required"
       case .shutdownFailure: "Shutdown request fails"
-      case .completed: "Installed-system verification handoff"
-      case .installationMedia: "Installation media handoff"
+      case .completed: "Installation complete → first-boot check"
+      case .installationMedia: "Installation media required"
       }
     }
 
     public var guidance: String {
       switch self {
       case .allocationClamped:
-        "Choose another size. The simulated disk limit shrinks to the original allocation; the returned size must replace your choice and clear acknowledgement."
+        "Choose a larger size, then apply it. The simulated limit returns to the original size. Confirm the displayed size resets and acknowledgement clears."
       case .missingHelper:
-        "Continue and approve the plan. Install stays disabled; cancel and use Back to disk size."
+        "Approve the plan. Install must remain unavailable. Use Edit disk size to return to review."
       case .credentialsRejected:
-        "Use the dummy credentials. The first attempt is rejected; submit again to continue."
+        "Submit the test account. The first attempt is rejected; the next succeeds."
       case .connectionLost, .emptyReply, .helperFailure:
-        "Installation ends with an uncertain result. Check the last activity and confirm a new installation remains locked."
+        "Check the last verified activity. Starting another installation must remain unavailable."
       case .recoveryRetry:
-        "The first run fails at Recovery. Retry uses dummy credentials and only the simulated Recovery path."
+        "Retry Recovery using the test account. The simulation must not repeat disk preparation."
       case .shutdownFailure:
-        "Reach Recovery and request shutdown. This Mac stays on and instructions remain visible."
+        "Request shutdown from Recovery. Confirm your Mac stays on and the steps remain visible."
       default:
-        "Walk through the real installer screens using synthetic data. Try keyboard navigation, resize the window, and expand activity details. Reset starts a fresh simulation."
+        "Walk through the installer with test data. Check keyboard navigation, smaller windows, and activity details. Reset starts again."
       }
     }
   }
@@ -146,7 +147,9 @@
       let initial: UInt64 = 137_438_953_472
       let maximum: UInt64 =
         scenario == .allocationClamped && omarchyBytes != nil ? initial : 700_000_000_000
-      let length = min(maximum, max(80_000_000_000, omarchyBytes ?? initial))
+      let requested = min(maximum, max(80_000_000_000, omarchyBytes ?? initial))
+      let unit = PinnedAsahiPlanRequest.allocationUnitBytes
+      let length = scenario == .allocationAligned ? requested - requested % unit : requested
       return .plan(
         PlanDisplay(
           diskTotalBytes: scenario == .freeSpace ? 900_000_000_000 : 994_662_584_320,

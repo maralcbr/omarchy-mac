@@ -29,8 +29,8 @@ build_jobs="${OMARCHY_BUILD_JOBS:-10}"
   || fail "OMARCHY_BUILD_JOBS must be a positive integer"
 export CARGO_BUILD_JOBS="$build_jobs"
 
-marketing_version="${OMARCHY_APP_VERSION:-0.6.0}"
-build_number="${OMARCHY_APP_BUILD_NUMBER:-6}"
+marketing_version="${OMARCHY_APP_VERSION:-2.0.1}"
+build_number="${OMARCHY_APP_BUILD_NUMBER:-21}"
 signing_identity="${OMARCHY_APP_SIGNING_IDENTITY:--}"
 team_identifier="${OMARCHY_TEAM_ID:-}"
 
@@ -191,6 +191,36 @@ if [[ $sealed_catalog_available == "true" ]]; then
     "$resources/Release/catalog.json.sig"
 fi
 install -m 0444 "$engine_source" "$resources/Engine/artifacts/$engine_file_name"
+# Optional execution engines belong to the signed app, not the download cache.
+# Admit only files whose name, size and hash match its sealed catalog.
+if [[ $sealed_catalog_available == "true" && -d "$release_directory/engine-artifacts" ]]; then
+  python3 - "$sealed_catalog" "$release_directory/engine-artifacts" "$resources/Engine/artifacts" <<'PYCODE'
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import sys
+catalog, sources, destination = map(Path, sys.argv[1:])
+for model in json.loads(catalog.read_text())["models"]:
+    artifact = model["engineArtifact"]
+    name = artifact["fileName"]
+    if Path(name).name != name or not name.endswith(".tar.gz"):
+        raise SystemExit("unsafe bundled engine name")
+    source = sources / name
+    if source.is_symlink():
+        raise SystemExit("bundled engine cannot be a symlink")
+    if not source.exists():
+        continue
+    expected = model["engineDigest"].removeprefix("sha256:")
+    if source.stat().st_size != artifact["sizeBytes"] or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+        raise SystemExit("bundled engine differs from signed catalog")
+    target = destination / name
+    if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+        raise SystemExit("bundled engine conflicts with inspection engine")
+    shutil.copyfile(source, target)
+    target.chmod(0o444)
+PYCODE
+fi
 install -m 0444 \
   "$script_directory/OmarchyInstaller.icns" \
   "$resources/OmarchyInstaller.icns"

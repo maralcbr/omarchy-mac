@@ -53,11 +53,13 @@
     }
 
     public func execute(_ invocation: ClosedEngineInvocation) async throws -> Data {
-      let handoff = try ClosedEngineHandoffBuilder().prepare(
-        invocation: invocation,
-        assets: assets,
-        in: handoffDirectory
-      )
+      let handoff = try InstallerPerformance.measure("app_handoff") {
+        try ClosedEngineHandoffBuilder().prepare(
+          invocation: invocation,
+          assets: assets,
+          in: handoffDirectory
+        )
+      }
       defer { try? FileManager.default.removeItem(at: handoff.packageURL) }
       return try await submitter.submit(
         handoff,
@@ -241,6 +243,27 @@
         throw ClosedEngineHandoffError.unsafeArtifact(role)
       }
 
+      if fclonefileat(sourceDescriptor, AT_FDCWD, destination.path, 0) == 0 {
+        guard chmod(destination.path, S_IRUSR) == 0 else {
+          throw ClosedEngineHandoffError.unsafeArtifact(role)
+        }
+        let snapshot = try FileHandle(forReadingFrom: destination)
+        defer { try? snapshot.close() }
+        var hasher = SHA256()
+        var size: UInt64 = 0
+        while let chunk = try snapshot.read(upToCount: 4 * 1_048_576), !chunk.isEmpty {
+          size += UInt64(chunk.count)
+          hasher.update(data: chunk)
+        }
+        guard size == staged.artifact.expectedSizeBytes else {
+          throw ClosedEngineHandoffError.artifactSizeMismatch(role)
+        }
+        guard SHA256Digest.prefixedHex(hasher.finalize()) == staged.artifact.expectedDigest else {
+          throw ClosedEngineHandoffError.artifactDigestMismatch(role)
+        }
+        return
+      }
+      // Other filesystems retain the verified streaming-copy fallback.
       let destinationDescriptor = Darwin.open(
         destination.path,
         O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "status": "reproducible_validation_artifact_unsigned",
+  "status": "python_overlay_validation_artifact_unsigned",
   "source_acquisition": "verified-git-object-graph",
   "upstream_installer": {
     "repository": "https://github.com/AsahiLinux/asahi-installer.git",
@@ -141,7 +141,7 @@
     }
   },
   "downstream_overlay": {
-    "version": "v0.9.0-omarchy.13",
+    "version": "v0.9.0-omarchy.15",
     "capability": "candidate_bound_full_os_stage_one_authenticated_recovery",
     "engine_modes": [
       "inspect",
@@ -150,7 +150,7 @@
     ],
     "patch": {
       "path": "patches/0001-omarchy-engine-runtime.patch",
-      "sha256": "dec1171e1b9881b2daf40f864dea9a4c83cbc5e2a3fda3e40922630afc05b706"
+      "sha256": "c6f625c62250993fe8dd11f210225d2667b6ab341fa8922209ce0b435a3b60a7"
     },
     "metadata": {
       "path": "installer_data.json",
@@ -175,7 +175,7 @@
       {
         "path": "overlay/src/omarchy_asahi.py",
         "destination": "src/omarchy_asahi.py",
-        "sha256": "5828d81c0ecd13bfc8e6c24638c6554e7f820cfea6227ca0835b0b3ea97613ae"
+        "sha256": "9970fe43e9182b11cc4ea6669967575f8cb3a3df8f5f75a66f3c37786fd5b6be"
       },
       {
         "path": "overlay/src/omarchy_contract.py",
@@ -200,17 +200,17 @@
       {
         "path": "overlay/src/omarchy_runtime.py",
         "destination": "src/omarchy_runtime.py",
-        "sha256": "f3edbb8488718044929503a5d946aa8978e35601c3d19015982978a99abd810b"
+        "sha256": "0e4e141d26a86263a1348df94d665276f87dc3aaef27b55ab8eaa3b542e69f71"
       },
       {
         "path": "overlay/src/omarchy_stage1.py",
         "destination": "src/omarchy_stage1.py",
-        "sha256": "83c25f40a9bab9518f949bae9f02f902dfff27830879e89a645331d8de48a20c"
+        "sha256": "206f1decf3176359f0e11b8a4d2afdc2997ff24fa9498fa057ddd2d75b295ea5"
       },
       {
         "path": "overlay/tests/test_omarchy_asahi.py",
         "destination": "tests/test_omarchy_asahi.py",
-        "sha256": "57fba1d33b5e32e506329bebceeba3702adf469630e509b7b97a99dc87431222"
+        "sha256": "305afd9654feb32684959e047e3c757e9633ef72df368384e113482f7a290420"
       },
       {
         "path": "overlay/tests/test_omarchy_contract.py",
@@ -245,7 +245,17 @@
       {
         "path": "overlay/tests/test_omarchy_stage1.py",
         "destination": "tests/test_omarchy_stage1.py",
-        "sha256": "6c40f2a2a96c0ee97fc91215d7a793f0f6bef208d0bc887bdcc6ad92a46b295f"
+        "sha256": "170989306f796c8baab19e715613be380f24f0646be2c6d8ffc565e2e676e4c0"
+      },
+      {
+        "path": "overlay/src/omarchy_image.py",
+        "destination": "src/omarchy_image.py",
+        "sha256": "1d40e30d3481af101ba27edaa6d4003f4d5fd71b7b359899d7a754c8963f76a0"
+      },
+      {
+        "path": "overlay/tests/test_omarchy_image.py",
+        "destination": "tests/test_omarchy_image.py",
+        "sha256": "2d8ebe63c25b290f24fb70d5195f50743c79baf9eb70e8a8bba3ab5f95d5e97f"
       }
     ]
   },
@@ -260,14 +270,24 @@
     },
     {
       "path": "verify-source-lock.py",
-      "sha256": "875284f3219a831deceb9b4b0b07ce0a064e1c53f40242903835589e89bd06e0"
+      "sha256": "12476ebd532b72e45ced4480b4e783ff09e95fef82c32a7bdf45aa1f89fc3d6d"
+    },
+    {
+      "path": "rebuild-python-overlay.py",
+      "sha256": "94547f47bd6c5a6b9a3cc12f6e4dae76594be7fe9857b4685d97f7bb2fced92f"
     }
   ],
   "validation_artifact": {
-    "filename": "installer-v0.9.0-omarchy.13.tar.gz",
-    "size_bytes": 22071253,
-    "sha256": "8bd8e8d2b94f3717d5fcf95516c6bf01dced1db4d396a73da7962e210d2b45a5",
-    "reproducibility_scope": "two-clean-builds-same-host-pinned-toolchain",
+    "filename": "installer-v0.9.0-omarchy.15.tar.gz",
+    "size_bytes": 17840637,
+    "sha256": "8672182b3a60eecab83a7a1f014d257047f77d065432b3da9ea29509a57eb28f",
+    "reproducibility_scope": "two-identical-python-overlay-repacks-authenticated-base",
     "signature": "absent"
+  },
+  "incremental_build": {
+    "base_filename": "installer-v0.9.0-omarchy.14.tar.gz",
+    "base_sha256": "9e9277384b6c9e8b269cc79b1b24df7bfcdcbb898a596a677b74d1d18050aebe",
+    "recipe": "rebuild-python-overlay.py",
+    "scope": "Python overlay only; native runtime and bootloader preserved from authenticated deployed base"
   }
 }

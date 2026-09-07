@@ -243,8 +243,10 @@ class EngineRuntime:
             metadata_path=self.values["OMARCHY_ENGINE_METADATA"],
             payload_path=self.values["OMARCHY_ENGINE_PAYLOAD"],
             stub_size=stub_size,
+            full_readback=os.environ.get("OMARCHY_FULL_READBACK") == "1",
         )
-        adapter.preflight(plan)
+        with omarchy_asahi.timing("preflight"):
+            adapter.preflight(plan)
         if self.mode == "retry-recovery-authorization":
             return omarchy_stage1.retry_recovery_authorization(
                 plan,

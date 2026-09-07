@@ -73,7 +73,8 @@ def require_validation_artifact(record: dict) -> None:
         raise ValueError("invalid validation artifact SHA-256")
     if (
         record["reproducibility_scope"]
-        != "two-clean-builds-same-host-pinned-toolchain"
+        not in {"two-clean-builds-same-host-pinned-toolchain",
+                "two-identical-python-overlay-repacks-authenticated-base"}
     ):
         raise ValueError("invalid validation artifact reproducibility scope")
     if record["signature"] != "absent":

@@ -33,6 +33,8 @@ Requires Xcode and XcodeBuildMCP. The launcher builds the debug app and supplies
 | Execution | Connection lost; empty reply; helper failure; interrupted live progress | Retain verified activity; uncertain outcomes cannot start another installation |
 | Recovery | Recovery fails then retry succeeds; manual recovery required; shutdown request fails | Retry only the eligible Recovery path; keep instructions visible when shutdown fails |
 
+Click the size field to edit GB. Use the green checkmark or Return to apply; use the red cross or Escape to cancel. Invalid or out-of-range values cannot be applied. Installation is disabled until you apply or cancel.
+
 For disk clamping, tick the acknowledgement and choose a larger size. The engine returns the original 137 GB allocation with a smaller upper bound. The displayed size must return to 137 GB and the tick must clear. In the free-space scenario, choose 600 GB: macOS remains 100 GB and unallocated capacity becomes 200 GB.
 
 For cancellation, open the authorization sheet, cancel, then choose **Back to disk size**. Approval must be discarded and the acknowledgement must be empty. After submission, reset/back/channel changes in the installer remain unavailable; the simulator's separate reset can still start a new dry test.
@@ -47,7 +49,7 @@ For ambiguous outcomes, expand **Last verified activity**. Lack of a checkpoint 
 4. Cancelling authorization permits returning to disk review and discards approval.
 5. Progress shows step count, actual phase, elapsed time, and expandable verified activity. Byte-based download progress remains measurable.
 6. Shutdown dispatch success or failure stays visible; the app does not quit before macOS decides whether shutdown can proceed. Recovery steps can be copied for another device.
-7. Disk resizing has a native stepper and assistive adjustment action. Keyboard focus is retained. Long content scrolls, and technical errors expand on demand.
+7. Disk resizing has a text field with green Apply and red Cancel controls, plus an assistive adjustment action. Keyboard focus is retained. Long content scrolls, and technical errors expand on demand.
 8. Plan review names the release/channel and target. The credential sheet explains the macOS account and authorization purpose. Wording consistently uses macOS, SSD, and Shut down.
 
 ## Verification
@@ -62,3 +64,16 @@ xcodebuildmcp swift-package test --package-path "$PWD" --configuration release
 The simulation matrix runs in debug; production session and trust tests run in both configurations. Tests cover blocked hosts, preparation failures, all simulated terminal outcomes, same-size clamping, free-space capacity, credential retry, shutdown failure, overlapping operations, late callbacks, and retained checkpoints with zero-delay completion.
 
 Simulation proves presentation and session behavior. It does not prove hardware compatibility, successful physical installation, Recovery boot, payload validity, notarization, or production deployment. No physical M1 connection is required.
+
+## Removal
+
+Choose **Installation → Remove Omarchy…** to dry-test removal independently of
+installation. The popup's **Removal test** selector covers nine outcomes. Type
+`delete omarchy installation and data` exactly to enable removal. No real password
+is requested in simulation. See [Removal.md](Removal.md) for the supported disk
+layout, recovery behavior and test coverage.
+
+The **Disk alignment · whole GB unchanged** scenario reproduces normal 1 MiB
+partition alignment. Selecting 180 GB must keep 180 GB displayed without a
+capacity-limit warning. The acknowledgement still resets. Actual whole-GB changes
+use “Space for Omarchy changed from … to …” without assuming why it changed.
