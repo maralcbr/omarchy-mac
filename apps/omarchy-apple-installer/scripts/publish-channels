@@ -55,8 +55,10 @@ USAGE
 }
 
 validate_os_tag() {
-  [[ $1 =~ ^os-v[0-9]+\.[0-9]+\.[0-9]+-mac\.[0-9]+\.[0-9]{8}(\.[0-9]+)?$ ]] ||
-    die "invalid OS release tag: $1 (expected os-vX.Y.Z-mac.N.YYYYMMDD)"
+  # A trailing -<lane> names a parallel payload lane (rc-aurora's kernel) built
+  # from the same release train.
+  [[ $1 =~ ^os-v[0-9]+\.[0-9]+\.[0-9]+-mac\.[0-9]+\.[0-9]{8}(\.[0-9]+)?(-[a-z][a-z0-9]*)?$ ]] ||
+    die "invalid OS release tag: $1 (expected os-vX.Y.Z-mac.N.YYYYMMDD[-lane])"
 }
 
 validate_channel() {
