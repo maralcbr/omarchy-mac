@@ -43,9 +43,9 @@ channels_usage() {
   cat <<'USAGE'
 Usage:
   publish-channels envelope --catalog FILE --signature FILE --output FILE
-  publish-channels os-promote --tag TAG --to stable|rc [--minimum-sequence N] [--no-prune]
+  publish-channels os-promote --tag TAG --to stable|rc|rc-aurora [--minimum-sequence N] [--no-prune]
   publish-channels app-publish --pkg FILE --version X.Y.Z [--to stable|rc]
-  publish-channels channel-status [--channel stable|rc|all]
+  publish-channels channel-status [--channel stable|rc|rc-aurora|all]
   publish-channels prune [--confirm]
 
 Credentials come from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or the Keychain
@@ -60,7 +60,8 @@ validate_os_tag() {
 }
 
 validate_channel() {
-  [[ $1 == "stable" || $1 == "rc" ]] || die "invalid channel: $1"
+  [[ $1 == "stable" || $1 == "rc" || $1 == "rc-aurora" ]] ||
+    die "invalid channel: $1"
 }
 
 validate_installer_version() {
@@ -69,8 +70,8 @@ validate_installer_version() {
 
 mutable_key_allowed() {
   case $1 in
-    channels/stable/catalog.signed.json | channels/rc/catalog.signed.json) return 0 ;;
-    channels/stable/channel.json | channels/rc/channel.json) return 0 ;;
+    channels/stable/catalog.signed.json | channels/rc/catalog.signed.json | channels/rc-aurora/catalog.signed.json) return 0 ;;
+    channels/stable/channel.json | channels/rc/channel.json | channels/rc-aurora/channel.json) return 0 ;;
     installer/stable/$PKG_FILE_NAME | installer/rc/$PKG_FILE_NAME) return 0 ;;
     installer/stable/installer.json | installer/rc/installer.json) return 0 ;;
     *) return 1 ;;
@@ -406,7 +407,7 @@ channel_status() {
   local work channels channel failures=0
   work=$(make_scratch)
   if [[ $requested == "all" ]]; then
-    channels="stable rc"
+    channels="stable rc rc-aurora"
   else
     channels=$requested
   fi
@@ -450,7 +451,7 @@ channel_status() {
 # installer version is reachable when any channel's installer.json points at it.
 referenced_prefixes() {
   local work=$1 channel envelope catalog signature pointer
-  for channel in stable rc rc edge; do
+  for channel in stable rc rc-aurora edge; do
     envelope="$work/$channel.env.json"
     if fetch_public "channels/$channel/catalog.signed.json" "$envelope"; then
       catalog="$work/$channel.catalog"; signature="$work/$channel.sig"

@@ -170,9 +170,20 @@
     public static let startOver = "Start over"
     public static let downloadInstaller = "Download the installer"
     public static let rcBadge = "BETA"
+    public static let rcAuroraBadge = "AURORA"
+
+    /// What the header says a pre-release install is. Stable carries no badge.
+    public static func badge(for channel: ReleaseChannel) -> String {
+      switch channel {
+      case .stable: ""
+      case .rc: rcBadge
+      case .rcAurora: rcAuroraBadge
+      }
+    }
     public static let channelMenuTitle = "Release Channel"
     public static let channelStable = "Stable"
     public static let channelRC = "RC"
+    public static let channelRCAurora = "RC (Aurora)"
     public static let doneVerifiedRows = [
       PlanFactRow(label: "Boot chain", value: "m1n1 → U-Boot → GRUB → Omarchy"),
       PlanFactRow(

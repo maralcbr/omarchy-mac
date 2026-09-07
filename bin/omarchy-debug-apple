@@ -88,7 +88,7 @@ check_repos() {
 
 check_packages() {
   local pkg
-  for pkg in linux-asahi asahi-fwextract asahi-desktop-meta vulkan-asahi \
+  for pkg in "$(omarchy-hw-apple-kernel)" asahi-fwextract asahi-desktop-meta vulkan-asahi \
     mesa networkmanager iwd wireplumber speakersafetyd alsa-ucm-conf-asahi; do
     if pacman -Q "$pkg" >/dev/null 2>&1; then
       record PASS "pkg-$pkg" "$(pacman -Q "$pkg" 2>/dev/null)"

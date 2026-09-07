@@ -18,27 +18,32 @@
     case invalidCatalogEnvelope
   }
 
-  /// The release channels a build can read. Every build names both, so the
-  /// rc channel can be opened later without shipping a new signed app.
+  /// The release channels a build can read. Every build names all of them, so
+  /// a channel can be opened later without shipping a new signed app.
+  ///
+  /// rcAurora serves the Aurora kernel payload. It is a separate channel rather
+  /// than a variant inside rc because it is a different OS image, and a tester
+  /// on rc must never be handed it by accident.
   public enum ReleaseChannel: String, CaseIterable, Codable, Sendable {
     case stable
     case rc
+    case rcAurora = "rc-aurora"
   }
 
   public struct ReleaseChannelEndpoints: Equatable, Sendable {
-    public let stable: URL
-    public let rc: URL
+    private let endpoints: [ReleaseChannel: URL]
 
-    public init(stable: URL, rc: URL) {
-      self.stable = stable
-      self.rc = rc
+    /// Every channel must be named; a build that cannot resolve one of its own
+    /// channels is not a build that should run.
+    public init?(endpoints: [ReleaseChannel: URL]) {
+      guard Set(endpoints.keys) == Set(ReleaseChannel.allCases) else {
+        return nil
+      }
+      self.endpoints = endpoints
     }
 
     public func catalogURL(for channel: ReleaseChannel) -> URL {
-      switch channel {
-      case .stable: stable
-      case .rc: rc
-      }
+      endpoints[channel]!
     }
   }
 
@@ -99,7 +104,7 @@
       } catch {
         throw InstallerReleaseConfigurationError.invalidDescriptor
       }
-      guard decoded.schemaVersion == 2 else {
+      guard decoded.schemaVersion == 3 else {
         throw InstallerReleaseConfigurationError.unsupportedSchema(
           decoded.schemaVersion
         )
@@ -122,13 +127,11 @@
       }
       // Two channels pointing at one object would silently defeat the
       // separation between what testers see and what users get.
-      guard endpoints[.stable] != endpoints[.rc] else {
+      guard Set(endpoints.values).count == ReleaseChannel.allCases.count,
+        let channels = ReleaseChannelEndpoints(endpoints: endpoints)
+      else {
         throw InstallerReleaseConfigurationError.invalidURL("channels")
       }
-      let channels = ReleaseChannelEndpoints(
-        stable: endpoints[.stable]!,
-        rc: endpoints[.rc]!
-      )
 
       let trustRoot: AppOwnedTrustRoot
       do {
