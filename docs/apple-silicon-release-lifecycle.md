@@ -12,6 +12,9 @@ the Asahi platform foundation. Asahi continues to own APFS preparation,
 recoveryOS and boot policy, m1n1, U-Boot, device trees, machine firmware, and
 the Asahi kernel.
 
+The commands for every step below, both lanes, are in
+[`apple-silicon-deployment.md`](apple-silicon-deployment.md).
+
 ## 1. Assemble a private candidate
 
 1. Build only the explicit `aarch64/apple-silicon` target through the
@@ -90,6 +93,26 @@ package ownership and migrations, prove eligible preview installations move to
 the standard signed Omarchy channel, and leave ineligible systems on a
 documented safe channel. Promotion receives a new, higher sequence; it never
 reuses preview metadata or weakens exact-model admission.
+
+## 4a. Runtime-only changes take the fast lane
+
+A change that touches only the runtime pair (scripts, configuration,
+migrations — everything under this repository that ships in `omarchy-dev` and
+`omarchy-settings-dev`) does not change the repository package set, so it does
+not need VM acceptance, package promotion, or a new payload. Push it to `main`
+and run, in omarchy-pkgs:
+
+```bash
+bin/asahi-runtime-release <commit>
+```
+
+That builds an incremental candidate (gated by the upgrade over the
+predecessor) and publishes the next release channel; installed Macs receive it
+on their next `omarchy update`, about fifteen minutes after the push. The lane
+refuses a candidate that rebuilt any repository package — that change belongs
+to the full lane above. Payloads are rebuilt when the package set changes or on
+a cadence, not per fix: a fresh install syncs its repositories and updates on
+first boot.
 
 ## 5. Roll back a bad candidate
 

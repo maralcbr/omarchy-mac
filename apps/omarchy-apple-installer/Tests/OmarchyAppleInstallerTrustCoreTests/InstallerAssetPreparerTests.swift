@@ -8,6 +8,40 @@
   final class InstallerAssetPreparerTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_788_000_000)
 
+    func testTwoReleasesShareOneStagingDirectoryWithoutColliding() async throws {
+      // rc and rc-aurora both deliver an installer_data.json, with different
+      // bytes. A tester who tries one channel and then the other must not be
+      // refused because the first channel's file is still staged.
+      let first = try makeFixture(
+        schemaVersion: 2, metadataContent: "asahi metadata",
+        evidenceRevision: "4.0.2-mac.1.20260907")
+      let second = try makeFixture(
+        schemaVersion: 2, metadataContent: "aurora metadata",
+        evidenceRevision: "4.0.2-mac.1.20260907-aurora")
+      let directory = temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+
+      let one = try await first.preparer.prepare(first.request(stagingDirectory: directory))
+      let two = try await second.preparer.prepare(
+        second.request(stagingDirectory: directory), previouslyPrepared: one)
+      let back = try await first.preparer.prepare(
+        first.request(stagingDirectory: directory), previouslyPrepared: two)
+      XCTAssertEqual(try Data(contentsOf: back.metadata.fileURL), first.metadata)
+      let firstDownloads = await first.downloader.downloadCount
+      let secondDownloads = await second.downloader.downloadCount
+      XCTAssertEqual(firstDownloads, 3)
+      XCTAssertEqual(secondDownloads, 3)
+
+      XCTAssertEqual(try Data(contentsOf: one.metadata.fileURL), first.metadata)
+      XCTAssertEqual(try Data(contentsOf: two.metadata.fileURL), second.metadata)
+      XCTAssertNotEqual(one.metadata.fileURL, two.metadata.fileURL)
+      XCTAssertEqual(
+        one.metadata.fileURL.deletingLastPathComponent().lastPathComponent, "4.0.2-mac.1.20260907")
+      XCTAssertEqual(
+        two.metadata.fileURL.deletingLastPathComponent().lastPathComponent,
+        "4.0.2-mac.1.20260907-aurora")
+    }
+
     func testSignedSchemaTwoCatalogStagesExactAdmittedAssets() async throws {
       let fixture = try makeFixture(schemaVersion: 2)
       let directory = temporaryDirectory()
@@ -34,7 +68,10 @@
       defer { try? FileManager.default.removeItem(at: directory) }
       let request = fixture.request(stagingDirectory: directory)
       let first = try await fixture.preparer.prepare(request)
-      let second = try await fixture.preparer.prepare(request, previouslyPrepared: first)
+      let recorder = AssetStagingProgressRecorder()
+      let second = try await fixture.preparer.prepare(
+        request, progress: recorder.handler, previouslyPrepared: first)
+      XCTAssertTrue(recorder.events.isEmpty, "Replanning must not rehash already prepared assets")
       XCTAssertEqual(first.payload.fileURL, second.payload.fileURL)
       let expired = InstallerAssetPreparationRequest(
         host: request.host, catalogPayload: request.catalogPayload,
@@ -369,10 +406,12 @@
       host: AppleSiliconHostInspection? = nil,
       invalidateSignature: Bool = false,
       omitEngineVersion: Bool = false,
-      installerMinimumVersion: String? = nil
+      installerMinimumVersion: String? = nil,
+      metadataContent: String = "installer metadata",
+      evidenceRevision: String = "evidence-s4"
     ) throws -> AssetPreparationFixture {
       let engine = Data("engine archive".utf8)
-      let metadata = Data("installer metadata".utf8)
+      let metadata = Data(metadataContent.utf8)
       let payload = Data("omarchy payload".utf8)
       let repairManifest = Data("{\"operation\":\"repair-installed-system\"}".utf8)
       var artifacts = [
@@ -392,7 +431,8 @@
         payload: payload,
         repairManifest: repairManifest,
         installerMinimumVersion: installerMinimumVersion,
-        omitEngineVersion: omitEngineVersion
+        omitEngineVersion: omitEngineVersion,
+        evidenceRevision: evidenceRevision
       )
       let signature = try privateKey.signature(for: payloadData)
       let deliveredSignature =
@@ -420,7 +460,13 @@
         rcURL: envelope,
       ])
       let releaseConfiguration = InstallerReleaseConfiguration(
-        channels: ReleaseChannelEndpoints(stable: stableURL, rc: rcURL),
+        channels: ReleaseChannelEndpoints(endpoints: [
+          .stable: stableURL,
+          .rc: rcURL,
+          .rcAurora: URL(
+            string: "https://releases.example.com/channels/rc-aurora/catalog.signed.json"
+          )!,
+        ])!,
         defaultChannel: .stable,
         trustRoot: trustRoot,
         helperMachServiceName: "com.omarchy.apple-installer.helper",
@@ -458,7 +504,8 @@
       payload: Data,
       repairManifest: Data,
       installerMinimumVersion: String? = nil,
-      omitEngineVersion: Bool
+      omitEngineVersion: Bool,
+      evidenceRevision: String = "evidence-s4"
     ) -> Data {
       let issued = ISO8601DateFormatter().string(
         from: now.addingTimeInterval(-3_600)
@@ -486,7 +533,7 @@
         } ?? ""
       return Data(
         """
-        {"schemaVersion":\(schemaVersion),"sequence":30,"issuedAt":"\(issued)","expiresAt":"\(expires)"\(installer),"models":[{"deviceIdentifier":"apple,j314s","status":"enabled","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"\(digest(engine))","metadataDigest":"\(digest(metadata))","payloadDigest":"\(digest(payload))","evidenceRevision":"evidence-s4"\(delivery)}]}
+        {"schemaVersion":\(schemaVersion),"sequence":30,"issuedAt":"\(issued)","expiresAt":"\(expires)"\(installer),"models":[{"deviceIdentifier":"apple,j314s","status":"enabled","asahiInstallerTag":"v0.9.0","asahiInstallerRevision":"\(String(repeating: "a", count: 40))","asahiInstallerDataRevision":"\(String(repeating: "b", count: 40))","downstreamRevision":"\(String(repeating: "c", count: 40))","engineDigest":"\(digest(engine))","metadataDigest":"\(digest(metadata))","payloadDigest":"\(digest(payload))","evidenceRevision":"\(evidenceRevision)"\(delivery)}]}
         """.utf8
       )
     }

@@ -33,6 +33,7 @@
             Picker("Test channel", selection: $channel) {
               Text("Stable").tag(ReleaseChannel.stable)
               Text("Release candidate").tag(ReleaseChannel.rc)
+              Text(PlainLanguage.channelRCAurora).tag(ReleaseChannel.rcAurora)
             }.disabled(!canChangeChannel)
             Toggle("Slow playback", isOn: $slow)
             Toggle("Dark mode", isOn: $dark)

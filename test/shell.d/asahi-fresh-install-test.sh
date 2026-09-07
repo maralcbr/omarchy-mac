@@ -18,8 +18,10 @@ pass "fresh Asahi installer exposes the verified bundle entrypoint"
 
 grep -Fq 'omarchy-base-asahi.packages' "$installer" || fail "fresh installer reads the Asahi package closure"
 grep -Fq 'pacman -Syu --needed --noconfirm' "$installer" || fail "fresh installer resolves the runtime package transaction"
-grep -Fq -- '--ignore linux-asahi,linux-asahi-headers,m1n1' "$installer" || fail "fresh installer excludes protected Asahi boot packages from the system upgrade"
-grep -Fq '[[ $package == "linux-asahi" || $package == "linux-asahi-headers" || $package == "m1n1" ]]' "$installer" || fail "fresh installer omits protected Asahi boot packages from explicit targets"
+grep -Fq -- '--ignore "$kernel_package,$kernel_package-headers,m1n1"' "$installer" || fail "fresh installer excludes protected boot packages from the system upgrade"
+grep -Fq '$package == "$kernel_package" || $package == "$kernel_package-headers"' "$installer" || fail "fresh installer omits the installed kernel from explicit targets"
+grep -Fq '$package == "linux-asahi" || $package == "linux-asahi-headers"' "$installer" || fail "fresh installer omits the Asahi kernel from explicit targets"
+grep -Fq '$package == "m1n1"' "$installer" || fail "fresh installer omits m1n1 from explicit targets"
 grep -Fq 'pacman -U --needed --noconfirm "${archives[@]}"' "$installer" || fail "fresh installer uses one exact six-package transaction"
 if grep -Fq 'makepkg' "$installer"; then
   fail "fresh installer must not compile packages on the target machine"
@@ -37,8 +39,8 @@ if grep -Fq 'useradd --system' "$installer"; then
 fi
 
 runtime_line=$(grep -n -m1 'pacman -Syu --needed --noconfirm' "$installer" | cut -d: -f1)
-account_collision_line=$(grep -Fn -m1 'fail "The package build account already exists"' "$installer" | cut -d: -f1)
-(( account_collision_line < runtime_line )) || fail "fresh installer rejects unrelated build accounts before package mutations"
+target_collision_line=$(grep -Fn -m1 'fail "User already exists outside this release installation: $target_user"' "$installer" | cut -d: -f1)
+(( target_collision_line < runtime_line )) || fail "fresh installer rejects unrelated target users before package mutations"
 checkpoint_line=$(grep -n -m1 'mv -T "$checkpoint_tmp" "$state_dir"' "$installer" | cut -d: -f1)
 (( checkpoint_line < runtime_line )) || fail "fresh installer checkpoints boot hashes before package mutations"
 grep -Fq 'flock -n "$install_lock"' "$installer" || fail "fresh installer serializes concurrent runs"
@@ -64,7 +66,8 @@ grep -Fq '/var/lib/sddm/state.conf' "$installer" || fail "fresh installer seeds 
 grep -Fq 'Session=omarchy.desktop' "$installer" || fail "fresh installer records the Omarchy session as last"
 pass "fresh installer runs the Quattro system and user finalizers"
 
-grep -Fq '/boot/vmlinuz-linux-asahi' "$installer" || fail "fresh installer protects the Asahi kernel"
+grep -Fq 'kernel_package=linux-asahi' "$installer" || fail "fresh installer defaults to the Asahi kernel"
+grep -Fq 'asahi_kernel_sha256=$(sha256sum "/boot/vmlinuz-$kernel_package")' "$installer" || fail "fresh installer protects the selected kernel"
 grep -Fq '/boot/grub/grub.cfg' "$installer" || fail "fresh installer protects GRUB"
 grep -Fq 'sha256sum --check --status <<<"$asahi_kernel_sha256"' "$installer" || fail "fresh installer verifies the Asahi kernel hash"
 grep -Fq 'sha256sum --check --status <<<"$grub_sha256"' "$installer" || fail "fresh installer verifies the GRUB hash"

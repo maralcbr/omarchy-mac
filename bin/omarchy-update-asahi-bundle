@@ -224,8 +224,10 @@ if [[ $mode == "check" ]]; then
   exit 0
 fi
 
-[[ -f $(root_path /boot/vmlinuz-linux-asahi) ]] || fail "/boot/vmlinuz-linux-asahi is missing"
-pacman -Qq linux-asahi >/dev/null 2>&1 || fail "linux-asahi is not installed"
+kernel_package=$(omarchy-hw-apple-kernel)
+[[ -f $(root_path "/boot/vmlinuz-$kernel_package") ]] ||
+  fail "/boot/vmlinuz-$kernel_package is missing"
+pacman -Qq "$kernel_package" >/dev/null 2>&1 || fail "$kernel_package is not installed"
 [[ -f $(root_path /boot/grub/grub.cfg) ]] || fail "GRUB configuration is missing"
 pacman_conf=$(root_path /etc/pacman.conf)
 for repository in asahi-alarm core extra alarm aur; do
@@ -313,7 +315,7 @@ fi
 backup="/var/lib/omarchy/backups/asahi-bundle-$(date +%Y%m%d%H%M%S)"
 backup_tmp=$(mktemp -d)
 pacman -Q >"$backup_tmp/installed-packages.txt"
-sha256sum "$(root_path /boot/vmlinuz-linux-asahi)" >"$backup_tmp/boot-sha256.txt"
+sha256sum "$(root_path "/boot/vmlinuz-$kernel_package")" >"$backup_tmp/boot-sha256.txt"
 sudo find "$(root_path /etc/pacman.conf)" "$(root_path /etc/pacman.d)" "$(root_path /etc/NetworkManager)" \
   -type f -exec sha256sum {} + >"$backup_tmp/config-sha256.txt"
 sudo install -d -o root -g root -m 0700 "$backup"

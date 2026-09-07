@@ -17,7 +17,7 @@ Requires Xcode and XcodeBuildMCP. The launcher builds the debug app and supplies
 - **Scenario** selects one of 23 outcomes and resets the simulated session.
 - **Reset simulation** abandons only the in-memory run, including a stopped or uncertain outcome.
 - **Slow events** makes each event take two seconds; changing speed resets the session.
-- **Test channel** is local to the simulator. It locks while preparing, authorizing, executing, and after execution has started.
+- **Test channel** offers Stable, Release candidate, and RC (Aurora), and is local to the simulator. It locks while preparing, authorizing, executing, and after execution has started.
 - **Dark appearance** is on by default to match Omarchy. Turn it off to test light mode.
 - **Install / Authorize** on the simulation sheet uses a dummy credential. There are no real account fields.
 

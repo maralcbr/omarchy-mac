@@ -56,6 +56,10 @@ cat >"$stub_bin/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
 exit 0
 SH
+cat >"$stub_bin/omarchy-hw-apple-kernel" <<'SH'
+#!/bin/bash
+echo linux-asahi
+SH
 cat >"$stub_bin/omarchy-cmd-present" <<'SH'
 #!/bin/bash
 exit 0

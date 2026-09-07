@@ -182,10 +182,21 @@
     public static let doneHeadline = "Omarchy is installed"
     public static let startOver = "Start over"
     public static let downloadInstaller = "Download the installer"
-    public static let rcBadge = "RELEASE CANDIDATE"
+    public static let rcBadge = "Release candidate"
+    public static let rcAuroraBadge = "RC (Aurora)"
     public static let channelMenuTitle = "Release channel"
     public static let channelStable = "Stable"
     public static let channelRC = "Release candidate"
+    public static let channelRCAurora = "RC (Aurora)"
+
+    public static func badge(for channel: ReleaseChannel) -> String {
+      switch channel {
+      case .stable: channelStable
+      case .rc: rcBadge
+      case .rcAurora: rcAuroraBadge
+      }
+    }
+
     public static let doneVerifiedRows = [
       PlanFactRow(label: "Startup sequence", value: "m1n1 → U-Boot → GRUB → Omarchy"),
       PlanFactRow(

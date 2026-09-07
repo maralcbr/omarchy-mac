@@ -121,6 +121,13 @@
       guard let delivery = installer.delivery else {
         throw InstallerAssetPreparationError.deliveryMetadataUnavailable
       }
+      // Two releases can name an artifact identically (every channel ships an
+      // installer_data.json) with different bytes. Staging by release keeps a
+      // channel switch from tripping over the previous channel's download.
+      let stagingDirectory = try Self.releaseStagingDirectory(
+        for: installer,
+        in: request.stagingDirectory
+      )
 
       if let previous = previouslyPrepared, previous.installer == installer {
         let artifacts =
@@ -129,7 +136,7 @@
         let available = artifacts.allSatisfy { staged in
           guard
             staged.fileURL.deletingLastPathComponent().standardizedFileURL
-              == request.stagingDirectory.standardizedFileURL,
+              == stagingDirectory.standardizedFileURL,
             let values = try? staged.fileURL.resourceValues(forKeys: [
               .isRegularFileKey, .fileSizeKey,
             ]),
@@ -151,22 +158,22 @@
 
       async let engine = stager.stage(
         delivery.engine,
-        in: request.stagingDirectory,
+        in: stagingDirectory,
         progress: progress
       )
       async let metadata = stager.stage(
         delivery.metadata,
-        in: request.stagingDirectory,
+        in: stagingDirectory,
         progress: progress
       )
       async let payload = stager.stage(
         delivery.payload,
-        in: request.stagingDirectory,
+        in: stagingDirectory,
         progress: progress
       )
       async let repairManifest = stageRepairManifest(
         delivery.repairManifest,
-        in: request.stagingDirectory,
+        in: stagingDirectory,
         progress: progress
       )
 
@@ -179,6 +186,19 @@
         repairManifest: try await repairManifest,
         installerCompatibility: catalog.installerCompatibility
       )
+    }
+
+    static func releaseStagingDirectory(
+      for installer: PinnedInstallerRecord,
+      in stagingDirectory: URL
+    ) throws -> URL {
+      let revision = installer.evidenceRevision
+      guard revision.range(of: "^[0-9a-z][0-9a-z.-]*$", options: .regularExpression) != nil,
+        revision != ".", revision != ".."
+      else {
+        throw InstallerAssetPreparationError.deliveryMetadataUnavailable
+      }
+      return stagingDirectory.appendingPathComponent(revision, isDirectory: true)
     }
 
     private func stageRepairManifest(

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Write the app's release descriptor from a trust-root public key.
 #
-# The descriptor names both channels and never changes between releases, so
+# The descriptor names all three channels and never changes between releases, so
 # this runs once per signing key rather than once per release.
 set -euo pipefail
 
@@ -11,7 +11,7 @@ Usage:
   make-release-descriptor --public-key FILE --base-url URL --output FILE
                           [--default-channel stable|rc] [--adhoc]
 
-Writes release.json (schema 2) naming the stable and rc channel catalogs
+Writes release.json (schema 3) naming the stable, rc, and rc-aurora catalogs
 under BASE_URL and pinning the SHA-256 fingerprint of the public key.
 
 The helper code-signing requirement must match the build that will consume the
@@ -69,11 +69,14 @@ import sys
 
 output, fingerprint, base_url, default_channel, helper, requirement = sys.argv[1:7]
 descriptor = {
-    "schema_version": 2,
+    "schema_version": 3,
     "default_channel": default_channel,
     "channels": {
         "stable": {"catalog_url": f"{base_url}/channels/stable/catalog.signed.json"},
         "rc": {"catalog_url": f"{base_url}/channels/rc/catalog.signed.json"},
+        "rc-aurora": {
+            "catalog_url": f"{base_url}/channels/rc-aurora/catalog.signed.json"
+        },
     },
     "trust_root_fingerprint": fingerprint,
     "helper_mach_service_name": helper,

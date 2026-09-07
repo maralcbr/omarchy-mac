@@ -142,7 +142,7 @@ struct OnePageInstallerView: View {
         } else {
           StatusBadge(text: PlainLanguage.supportedBadge, kind: .ok)
         }
-        StatusBadge(text: channel == .rc ? "Release candidate" : "Stable", kind: .ok)
+        StatusBadge(text: PlainLanguage.badge(for: channel), kind: .ok)
       }
       .lineLimit(1)
     } else {

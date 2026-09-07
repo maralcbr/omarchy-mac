@@ -143,6 +143,9 @@ implement every S3 call:
 
 ## Runbooks
 
+The end-to-end sequence, including the runtime fast lane, is
+[`apple-silicon-deployment.md`](apple-silicon-deployment.md); the sections below cover the channel tooling itself.
+
 ### Release the app
 
 ```bash
@@ -151,8 +154,7 @@ OMARCHY_APP_VERSION=2.0.0 OMARCHY_APP_BUILD_NUMBER=20 \
   OMARCHY_APP_SIGNING_IDENTITY="Developer ID Application: …" OMARCHY_TEAM_ID=T2C384FJBD \
   Packaging/build-app.sh "$PWD/Release" /tmp/app
 OMARCHY_NOTARY_PROFILE=omarchy-notary Packaging/notarize-app.sh "/tmp/app/Omarchy MX Mac Installer.app"
-Packaging/pkg/build-pkg.sh --app "/tmp/app/Omarchy MX Mac Installer.app" \
-  --plist Packaging/helper-launchdaemon.plist --version 2.0.0 --out /tmp/Installer.pkg
+Packaging/pkg/build-pkg.sh --app "/tmp/app/Omarchy MX Mac Installer.app" --version 2.0.0 --out /tmp/Installer.pkg
 xcrun notarytool submit /tmp/Installer.pkg --keychain-profile omarchy-notary --wait
 xcrun stapler staple /tmp/Installer.pkg
 scripts/publish-channels app-publish --pkg /tmp/Installer.pkg --version 2.0.0 --to rc

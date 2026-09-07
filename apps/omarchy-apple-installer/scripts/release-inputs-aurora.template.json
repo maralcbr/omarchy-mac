@@ -1,0 +1,40 @@
+{
+  "payload_name": "omarchy-2026.09.07-aarch64-apple-silicon-aurora-os-package.zip",
+  "engine_name": "installer-v0.9.0-omarchy.14.tar.gz",
+  "metadata_name": "installer_data.json",
+  "engine_version": "v0.9.0-omarchy.14",
+  "evidence_revision": "4.0.2-mac.1.20260907-aurora",
+  "asahi_installer_tag": "v0.9.0",
+  "asahi_installer_revision": "f0469cea0899f3efed8efead604174c7a53c4451",
+  "asahi_installer_data_revision": "42648e71423eba308d2e3e6228253eff679b068b",
+  "downstream_revision": "dff6311446439e1f29f0f2e6c0cf82a9a190e5bc",
+  "device_identifiers": [
+    "apple,j314s",
+    "apple,j314c",
+    "apple,j316s",
+    "apple,j316c",
+    "apple,j274",
+    "apple,j293",
+    "apple,j313",
+    "apple,j456",
+    "apple,j457",
+    "apple,j375c",
+    "apple,j375d",
+    "apple,j413",
+    "apple,j415",
+    "apple,j493",
+    "apple,j473",
+    "apple,j474s",
+    "apple,j414s",
+    "apple,j414c",
+    "apple,j416s",
+    "apple,j416c",
+    "apple,j475c",
+    "apple,j475d"
+  ],
+  "installer": {
+    "minimum_version": "2.0.2",
+    "latest_version": "2.0.2",
+    "download_url": "https://downloads.aicodelabs.com.au/installer/rc/Omarchy-MX-Mac-Installer.pkg"
+  }
+}

@@ -6,6 +6,12 @@
   @testable import OmarchyInstallerUXCore
 
   final class PlainLanguageTests: XCTestCase {
+    func testChannelBadgesDistinguishStableRCAndAurora() {
+      XCTAssertEqual(PlainLanguage.badge(for: .stable), "Stable")
+      XCTAssertEqual(PlainLanguage.badge(for: .rc), "Release candidate")
+      XCTAssertEqual(PlainLanguage.badge(for: .rcAurora), "RC (Aurora)")
+    }
+
     func testAllocationNoticeIgnoresByteAlignmentAtDisplayedPrecision() {
       XCTAssertNil(
         PlainLanguage.allocationNotice(

@@ -29,7 +29,7 @@ gpg --batch --verify "$RUNNER_TEMP/alarm.tar.gz.sig" "$RUNNER_TEMP/alarm.tar.gz"
 # (aether, omacalc, obsidian, …) is a binary there, exactly as the fresh
 # installer consumes it. OMARCHY_ASAHI_REPOSITORY_TAG selects the immutable
 # release to test against; the default is the tag the installed image pins.
-repository_tag=${OMARCHY_ASAHI_REPOSITORY_TAG:-asahi-packages-stable-f701b12ebcfdc31ab708cff24bf5ed23d803f957}
+repository_tag=${OMARCHY_ASAHI_REPOSITORY_TAG:-asahi-packages-stable-650a68db78ca87bfedee923a927c7d231aa90f56}
 [[ $repository_tag =~ ^asahi-packages-(stable|candidate)-[0-9a-f]{40}$ ]] || {
   echo "OMARCHY_ASAHI_REPOSITORY_TAG must name an immutable asahi-packages release" >&2
   exit 1

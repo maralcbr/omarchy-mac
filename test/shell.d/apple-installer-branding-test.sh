@@ -8,17 +8,16 @@ package=$ROOT/apps/omarchy-apple-installer
 build_script=$package/Packaging/build-app.sh
 info_plist=$package/Packaging/Info.plist
 icon=$package/Packaging/OmarchyInstaller.icns
-components=$package/Sources/OmarchyAppleInstallerApp/InstallerComponents.swift
-package_manifest=$package/Package.swift
+icon_pack=$package/Packaging/IconPack-Original-Osaka-Jade
 
 if [[ ! -f $icon || -L $icon ]]; then
   fail "installer icon is a real file"
 fi
-if (( $(wc -c <"$icon") != 42899 )); then
+if (( $(wc -c <"$icon") != 80044 )); then
   fail "installer icon has the reviewed size"
 fi
 if [[ $(sha256sum "$icon" | awk '{print $1}') != \
-  "cf26ed5d2831db99c00d62ca046040e01a18e08e63363d629340d04ac6ec8c23" ]]; then
+  "e25b0b39c61cee9881f06f1184978e5e73241f80e42fe8b369ac79242b85b0b9" ]]; then
   fail "installer icon has the reviewed digest"
 fi
 if [[ $(python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIconFile"])' \
@@ -29,18 +28,11 @@ fi
 if ! grep -Fq '"$script_directory/OmarchyInstaller.icns"' "$build_script"; then
   fail "app packaging installs the Omarchy app icon"
 fi
-if ! grep -Fq 'Bundle.main.url(' "$components"; then
-  fail "app components load their authoritative image from the assembled app bundle"
+if ! cmp -s "$ROOT/icon.png" "$icon_pack/original-icon.png"; then
+  fail "icon pack preserves the original project image"
 fi
-if ! grep -Fq 'install -m 0444 "$app_icon_source" "$resources/omarchy-icon.png"' \
-  "$build_script"; then
-  fail "app packaging installs the authoritative image as a normal app resource"
-fi
-if grep -Fq 'resources: [.process("Resources")]' "$package_manifest"; then
-  fail "app packaging does not generate a second SwiftPM bundle with incompatible lookup semantics"
-fi
-if ! grep -Fq 'resources: [.copy("Resources/omarchy-icon.png")]' "$package_manifest"; then
-  fail "SwiftPM copies the authoritative image verbatim into the app resources"
+if ! cmp -s "$icon" "$icon_pack/OmarchyInstaller.icns"; then
+  fail "app packaging uses the approved icon pack"
 fi
 
-pass "installer packaging binds authoritative Omarchy resources"
+pass "installer packaging binds the approved original Omarchy icon"

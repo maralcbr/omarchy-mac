@@ -3,7 +3,7 @@
 Production packaging reads this directory and copies its contents into
 `Omarchy MX Mac Installer.app/Contents/Resources/Release/`:
 
-- `release.json` — schema version 2 descriptor naming the stable and rc
+- `release.json` — schema version 3 descriptor naming the stable, rc, and rc-aurora
   channel catalog URLs, the default channel, the expected Ed25519 trust-root
   fingerprint, the helper Mach service name, and the helper code-signing
   requirement. Generate it with `scripts/make-release-descriptor`.
@@ -16,7 +16,7 @@ service `omarchy-channel-signing-key` and must never appear here or anywhere
 else on disk; see
 [`docs/apple-silicon-distribution-channels.md`](../../../docs/apple-silicon-distribution-channels.md).
 
-The descriptor names both channels even while only the stable channel is in
+The descriptor names all three channels even while only the stable channel is in
 use, because the app is signed once: a channel absent from the descriptor
 cannot be opened later without shipping another signed app.
 

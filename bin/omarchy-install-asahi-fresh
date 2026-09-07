@@ -65,10 +65,17 @@ done
 [[ -r /proc/device-tree/compatible ]] || fail "Apple device-tree information is unavailable"
 grep -aq 'apple,' /proc/device-tree/compatible || fail "Apple Silicon device tree not found"
 
-for package in linux-asahi linux-asahi-headers m1n1 grub; do
+kernel_marker=/usr/share/omarchy/apple-silicon-kernel
+kernel_package=linux-asahi
+if [[ -f $kernel_marker && ! -L $kernel_marker ]]; then
+  read -r kernel_package <"$kernel_marker" || true
+fi
+[[ $kernel_package =~ ^linux-[a-z0-9]+$ ]] || fail "Unreadable kernel package name"
+
+for package in "$kernel_package" "$kernel_package-headers" m1n1 grub; do
   pacman -Q "$package" >/dev/null 2>&1 || fail "Required Asahi package is not installed: $package"
 done
-[[ -f /boot/vmlinuz-linux-asahi ]] || fail "/boot/vmlinuz-linux-asahi is unavailable"
+[[ -f /boot/vmlinuz-$kernel_package ]] || fail "/boot/vmlinuz-$kernel_package is unavailable"
 [[ -f /boot/grub/grub.cfg ]] || fail "The existing Asahi GRUB configuration is unavailable"
 for repository in asahi-alarm core extra alarm aur; do
   pacman-conf --repo-list | grep -Fxq "$repository" || fail "Required repository is unavailable: $repository"
@@ -173,7 +180,7 @@ if [[ -d $state_dir ]]; then
   sha256sum --check --status <<<"$asahi_kernel_sha256" || fail "The Asahi kernel changed after the interrupted installation"
   sha256sum --check --status <<<"$grub_sha256" || fail "The GRUB configuration changed after the interrupted installation"
 else
-  asahi_kernel_sha256=$(sha256sum /boot/vmlinuz-linux-asahi)
+  asahi_kernel_sha256=$(sha256sum "/boot/vmlinuz-$kernel_package")
   grub_sha256=$(sha256sum /boot/grub/grub.cfg)
   owner_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
   install -d -m 0755 /var/lib/omarchy
@@ -200,14 +207,16 @@ mapfile -t runtime_packages < <(
 # compiled on the target machine during installation.
 repo_packages=()
 for package in "${runtime_packages[@]}"; do
-  if [[ $package == "linux-asahi" || $package == "linux-asahi-headers" || $package == "m1n1" ]]; then
+  if [[ $package == "$kernel_package" || $package == "$kernel_package-headers" ||
+    $package == "linux-asahi" || $package == "linux-asahi-headers" ||
+    $package == "m1n1" ]]; then
     continue
   fi
   repo_packages+=("$package")
 done
 
 echo "Installing the Omarchy 4 Apple Silicon package set"
-pacman -Syu --needed --noconfirm --ignore linux-asahi,linux-asahi-headers,m1n1 \
+pacman -Syu --needed --noconfirm --ignore "$kernel_package,$kernel_package-headers,m1n1" \
   base-devel sudo xdg-user-dirs "${repo_packages[@]}"
 
 echo "Installing the verified six-package Omarchy release"
@@ -275,7 +284,7 @@ runuser -u "$target_user" -- env \
 
 ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-pacman -Q omarchy-dev omarchy-settings-dev linux-asahi linux-asahi-headers m1n1 networkmanager iwd >/dev/null
+pacman -Q omarchy-dev omarchy-settings-dev "$kernel_package" "$kernel_package-headers" m1n1 networkmanager iwd >/dev/null
 [[ $(cat /usr/share/omarchy/version) == 4.* ]] || fail "Installed Omarchy version is not 4.x"
 NetworkManager --print-config 2>/dev/null | grep -Fxq 'wifi.backend=iwd' || fail "NetworkManager iwd backend was not configured"
 grep -Eqi '^[[:space:]]*LANG[[:space:]]*=[[:space:]]*"?[^"[:space:]#]*\.utf-?8(@[^"[:space:]#]+)?"?([[:space:]]*(#.*)?)?$' /etc/locale.conf || fail "The system locale is not UTF-8"
