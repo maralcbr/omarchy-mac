@@ -35,6 +35,6 @@
   "installer": {
     "minimum_version": "2.0.2",
     "latest_version": "2.0.2",
-    "download_url": "https://downloads.aicodelabs.com.au/installer/stable/Omarchy-MX-Mac-Installer.pkg"
+    "download_url": "https://downloads.aicodelabs.com.au/installer/rc/Omarchy-MX-Mac-Installer.pkg"
   }
 }
