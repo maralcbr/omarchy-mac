@@ -133,6 +133,7 @@ asahi_migration_disposition() {
     1788102906.sh) printf 'run\treviewed architecture-neutral XCompose and legacy udev rule repair\n' ;;
     1788112314.sh) printf 'run\treviewed no-op: Asahi installs do not use the rc mirror pairing\n' ;;
     1788124236.sh) printf 'run\treviewed sshd hardening; self-gating on an enabled or active sshd\n' ;;
+    1788345489.sh) printf 'run\tApple Silicon speaker pop fix gates itself to Apple Silicon hardware\n' ;;
     1788486400.sh) printf 'run\treviewed default package parity install; every package is built for aarch64\n' ;;
     *) return 1 ;;
   esac

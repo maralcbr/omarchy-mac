@@ -40,6 +40,9 @@ allowed = {
   # upgrade carrying the handler is the one that would hit the conflict, and the
   # handler only helps once it is on disk. Package it the release after.
   "/usr/lib/chromium/initial_preferences",
+  # Hardware-conditional WirePlumber overlay. It shadows node/software-dsp.lua
+  # so it must not ship in omarchy-settings, which is installed on x86 too.
+  "/usr/local/share/wireplumber",
 }
 
 # One-time 3.x upgrade. It runs before this rule existed and cannot be made to
