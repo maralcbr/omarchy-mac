@@ -16,8 +16,7 @@ permissions:
 jobs:
   source-tests:
     name: Source test suites
-    # The sudo-expiry integration test requires systemd-tmpfiles --inline.
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       OMARCHY_PATH: ${{ github.workspace }}
@@ -37,20 +36,18 @@ jobs:
           repository: maralcbr/omarchy-iso
           path: dependencies/omarchy-iso
           persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq libarchive-tools lua5.4 ripgrep shellcheck plocate
-      - name: Install ImageMagick 7 and Gum
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
+      - name: Run source suites with Arch runtime tools
         run: |
-          /home/linuxbrew/.linuxbrew/bin/brew install imagemagick gum
-          echo "/home/linuxbrew/.linuxbrew/bin" >> "${GITHUB_PATH}"
-      - name: Expose Omarchy commands
-        run: echo "${GITHUB_WORKSPACE}/bin" >> "${GITHUB_PATH}"
-      - name: Run CLI and shell suites
-        run: ./test/all
-      - name: Verify stable release contract
-        run: bash test/shell.d/stable-release-test.sh
+          docker run --rm --init \
+            -v "$GITHUB_WORKSPACE:/src" -w /src \
+            -e TEST_UID="$(id -u)" \
+            -e OMARCHY_PATH=/src \
+            -e OMARCHY_PKGS_PATH=/src/dependencies/omarchy-pkgs \
+            -e OMARCHY_ISO_PATH=/src/dependencies/omarchy-iso \
+            archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5 \
+            bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed git jq libarchive lua ripgrep shellcheck imagemagick gum plocate openssh nodejs npm python unzip bc
+              useradd --create-home --uid "$TEST_UID" tester
+              export PATH="/src/bin:$PATH"
+              runuser -u tester -- bash -euo pipefail -c "./test/all && bash test/shell.d/stable-release-test.sh"
+            '
