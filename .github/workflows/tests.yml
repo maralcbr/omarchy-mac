@@ -16,7 +16,8 @@ permissions:
 jobs:
   source-tests:
     name: Source test suites
-    runs-on: ubuntu-24.04
+    # The sudo-expiry integration test requires systemd-tmpfiles --inline.
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       OMARCHY_PATH: ${{ github.workspace }}
@@ -40,12 +41,12 @@ jobs:
         with:
           node-version: 24
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq libarchive-tools lua5.4 ripgrep shellcheck
-      - name: Install ImageMagick 7
+        run: sudo apt-get update && sudo apt-get install -y jq libarchive-tools lua5.4 ripgrep shellcheck plocate
+      - name: Install ImageMagick 7 and Gum
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          /home/linuxbrew/.linuxbrew/bin/brew install imagemagick
+          /home/linuxbrew/.linuxbrew/bin/brew install imagemagick gum
           echo "/home/linuxbrew/.linuxbrew/bin" >> "${GITHUB_PATH}"
       - name: Expose Omarchy commands
         run: echo "${GITHUB_WORKSPACE}/bin" >> "${GITHUB_PATH}"
