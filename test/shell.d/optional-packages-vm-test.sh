@@ -8,6 +8,13 @@ test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 mkdir -p "$test_tmp/bin"
 
+# The real guest stages this helper under /root. Keep this unit test outside
+# the guest filesystem and replace only that deployment path with a stub.
+printf '#!/bin/bash\nexit 0\n' >"$test_tmp/alarm-snapshot"
+sed "s|bash /root/omarchy-vm-alarm-snapshot|bash $test_tmp/alarm-snapshot|" \
+  "$ROOT/test/vm/asahi-fresh/guest/optional-packages" >"$test_tmp/optional-packages"
+
+
 cat >"$test_tmp/bin/pacman" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$OMARCHY_TEST_PACMAN_LOG"
@@ -36,7 +43,7 @@ output=$(PATH="$test_tmp/bin:$PATH" \
   OMARCHY_OPTIONAL_PACKAGES_FILE="$test_tmp/transactions.tsv" \
   OMARCHY_OPTIONAL_REQUIRED_FILE="$test_tmp/required" \
   OMARCHY_OPTIONAL_LOG_DIR="$test_tmp/logs" \
-  bash "$ROOT/test/vm/asahi-fresh/guest/optional-packages" 2>&1)
+  bash "$test_tmp/optional-packages" 2>&1)
 status=$?
 set -e
 
@@ -58,7 +65,7 @@ if PATH="$test_tmp/bin:$PATH" \
   OMARCHY_OPTIONAL_PACKAGES_FILE="$test_tmp/transactions.tsv" \
   OMARCHY_OPTIONAL_REQUIRED_FILE="$test_tmp/required" \
   OMARCHY_OPTIONAL_LOG_DIR="$test_tmp/logs" \
-  bash "$ROOT/test/vm/asahi-fresh/guest/optional-packages" >/dev/null 2>&1; then
+  bash "$test_tmp/optional-packages" >/dev/null 2>&1; then
   fail 'optional package VM stage rejects unknown required transactions'
 fi
 pass 'optional package VM stage rejects unknown required transactions'

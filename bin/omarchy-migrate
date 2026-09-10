@@ -133,6 +133,15 @@ asahi_migration_disposition() {
     1788102906.sh) printf 'run\treviewed architecture-neutral XCompose and legacy udev rule repair\n' ;;
     1788112314.sh) printf 'run\treviewed no-op: Asahi installs do not use the rc mirror pairing\n' ;;
     1788124236.sh) printf 'run\treviewed sshd hardening; self-gating on an enabled or active sshd\n' ;;
+    1787215483.sh) printf 'run\treviewed architecture-neutral mise version retention\n' ;;
+    1787760281.sh) printf 'run\treviewed architecture-neutral Hermes CLI wrapper preserving user installs\n' ;;
+    1787843905.sh) printf 'run\treviewed architecture-neutral Hermes skill links\n' ;;
+    1788577553.sh) printf 'run\treviewed architecture-neutral Cursor CLI wrapper preserving existing commands\n' ;;
+    1788619462.sh) printf 'run\treviewed architecture-neutral optional Hermes theme handover\n' ;;
+    1788662350.sh) printf 'run\treviewed architecture-neutral root ownership repair for existing sleep hooks\n' ;;
+    1788724825.sh) printf 'run\treviewed architecture-neutral Muse CLI wrapper preserving existing commands\n' ;;
+    1788745941.sh) printf 'run\treviewed architecture-neutral Kitty local-socket security repair preserving custom settings\n' ;;
+    1788848726.sh) printf 'run\treviewed architecture-neutral retirement of the exact legacy icon font\n' ;;
     1788486400.sh) printf 'run\treviewed default package parity install; every package is built for aarch64\n' ;;
     *) return 1 ;;
   esac
