@@ -20,3 +20,5 @@ install.development.rails
 install.development.clojure
 install.development.php.php
 install.development.php.laravel
+install.ai.openclaw
+install.ai.perplexity

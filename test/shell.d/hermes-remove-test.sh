@@ -12,7 +12,7 @@ test_home="$test_tmp/home"
 mkdir -p "$mock_bin"
 # The remover uses the installed helper; keep it available even in the Python
 # cases that deliberately replace PATH with the fixture and system binaries.
-ln -s "$ROOT/bin/omarchy-cmd-present" "$mock_bin/omarchy-cmd-present"
+cp "$ROOT/bin/omarchy-cmd-present" "$mock_bin/omarchy-cmd-present"
 
 # Keep package-path checks scoped to the fixture, even with a live app open.
 python3 - "$ROOT/bin/omarchy-remove-ai-hermes" "$test_tmp" <<'PY'
