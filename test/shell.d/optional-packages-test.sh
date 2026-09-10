@@ -28,7 +28,7 @@ const required = new Set(requiredLines)
 assertEqual(transactions.size, lines.length, 'optional package transaction ids are unique')
 assertEqual(aurTransactions.size, aurLines.length, 'optional AUR transaction ids are unique')
 assertEqual(required.size, requiredLines.length, 'required aarch64 transaction ids are unique')
-assertEqual(required.size, 21, 'aarch64 support baseline covers every currently supported transaction')
+assertEqual(required.size, 23, 'aarch64 support baseline covers every currently supported transaction')
 assertDeepEqual(
   [...required].filter(id => !transactions.has(id)),
   [],

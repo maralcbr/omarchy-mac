@@ -75,6 +75,11 @@ HOME="$test_home" OMARCHY_PATH="$test_root" TEST_CALLS="$calls" \
   "$ROOT/bin/omarchy-migrate" >"$test_tmp/all-reviewed.out"
 pass "Asahi migration policy reviews every bundled migration"
 
+for migration in 1787215483.sh 1787760281.sh 1787843905.sh 1788577553.sh 1788619462.sh 1788662350.sh 1788724825.sh 1788745941.sh 1788848726.sh; do
+  [[ -f $state_dir/$migration && ! -e $state_dir/$migration.skipped ]] || fail "4.0.3 migration $migration runs on Apple Silicon"
+done
+pass "Asahi runs the reviewed 4.0.3 migrations"
+
 for migration in 1785273276.sh 1785424256.sh 1785944594.sh 1786137597.sh 1786391100.sh 1786482992.sh; do
   [[ -f $state_dir/$migration.skipped ]] || fail "Asahi migration policy skips $migration"
 done

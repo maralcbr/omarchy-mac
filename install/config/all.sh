@@ -10,6 +10,5 @@ run_logged "$OMARCHY_INSTALL/config/docker.sh"
 if ! omarchy-hw-apple-silicon; then
   run_logged "$OMARCHY_INSTALL/config/snapper.sh"
 fi
-run_logged "$OMARCHY_INSTALL/config/locate.sh"
 run_logged "$OMARCHY_INSTALL/config/enable-services.sh"
 run_logged "$OMARCHY_INSTALL/config/firewall.sh"

@@ -203,8 +203,13 @@ const expectedAgents = {
   codex: { icon: '\ue905', iconFont: 'omarchy', label: 'Codex' },
   grok: { icon: '\ue904', iconFont: 'omarchy', label: 'Grok' },
   gemini: { icon: '󰫢', label: 'Gemini' },
+  hermes: { icon: '\ue90a', iconFont: 'omarchy', label: 'Hermes' },
+  openclaw: { icon: '\ue90c', iconFont: 'omarchy', label: 'OpenClaw' },
   copilot: { icon: '', label: 'Copilot' },
   crush: { icon: '󰋑', label: 'Crush' },
+  muse: { icon: '󰛤', label: 'Muse Code' },
+  'cursor-agent': { icon: '\ue90d', iconFont: 'omarchy', label: 'Cursor CLI' },
+
 }
 assert(
   Object.entries(expectedAgents).every(([agent, expected]) => {
@@ -217,13 +222,13 @@ assert(
       && !entry.when
       && entry.checked.includes(`== \"${agent}\"`)
   }),
-  'menu exposes every mise-installable coding agent with its own glyph under Defaults > Agent'
+  'menu exposes every supported coding agent with its own glyph under Defaults > Agent'
 )
 assertDeepEqual(
   defaultItems
     .filter(item => item.parent === 'setup.default.agent')
     .map(item => item.label),
-  ['Claude', 'Codex', 'Copilot', 'Crush', 'Gemini', 'Grok', 'omp', 'OpenCode', 'Pi'],
+  ['Claude', 'Codex', 'Copilot', 'Crush', 'Cursor CLI', 'Gemini', 'Grok', 'Hermes', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Pi'],
   'menu sorts coding agents alphabetically'
 )
 assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
@@ -514,5 +519,5 @@ assert(
 JS
 
 font_charset=$(fc-query --format='%{charset}' "$ROOT/default/fonts/omarchy/omarchy.ttf")
-[[ $font_charset == *"e900-e907"* ]] || fail "Omarchy icon font includes every custom menu glyph"
+[[ $font_charset == *"e900-e908 e90a-e90d"* ]] || fail "Omarchy icon font includes every custom menu glyph"
 pass "Omarchy icon font includes the official agent marks"

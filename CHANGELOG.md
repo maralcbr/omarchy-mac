@@ -4,6 +4,14 @@ Release notes for the maintained Apple Silicon line are version-controlled in
 [`docs/releases/`](docs/releases/). GitHub Releases publish those files
 verbatim.
 
+## [4.0.3-mac.1] - Unreleased
+
+- Integrate upstream 4.0.3 security fixes, AI integrations, and migrations.
+- Retain Apple Silicon package, boot, network, and migration protections.
+- Prepare OpenClaw and Perplexity ARM packages and current Asahi platform pins.
+- Publication and physical qualification remain pending. See
+  [preparation notes](docs/releases/v4.0.3-mac.1.md).
+
 ## [4.0.2-mac.1] - 2026-08-31
 
 - Integrated upstream Omarchy 4.0.2 while preserving the Apple Silicon install,

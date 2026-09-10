@@ -10,7 +10,8 @@ grep -Fxq "# Omarchy MX Mac $version" "$notes"
 grep -Fxq '## Validation' "$notes"
 grep -Fq '**Full Changelog**:' "$notes"
 grep -Fq "## [$version]" "$ROOT/CHANGELOG.md"
-grep -Fq "| Omarchy \`$version\` | Recommended stable version |" "$ROOT/README.md"
+grep -Fq "| Omarchy \`$version\` | Recommended stable version |" "$ROOT/README.md" ||
+  grep -Fq "| Omarchy \`$version\` | Prepared update (unpublished) |" "$ROOT/README.md"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

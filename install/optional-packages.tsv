@@ -48,3 +48,7 @@ install.development.clojure|rlwrap
 install.development.php.php|php composer php-sqlite xdebug
 install.development.php.laravel|php composer php-sqlite xdebug
 install.development.php.symfony|php composer php-sqlite xdebug symfony-cli
+install.ai.t3-code|t3code-bin
+install.ai.hermes|hermes-desktop
+install.ai.openclaw|openclaw
+install.ai.perplexity|perplexity
