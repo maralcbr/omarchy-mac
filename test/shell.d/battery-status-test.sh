@@ -18,15 +18,30 @@ printf '212\n' >"$tmp_dir/power/macsmc-battery/cycle_count"
 cat >"$tmp_dir/bin/upower" <<'STUB'
 #!/bin/bash
 
+# A wireless mouse enumerates first, as a battery_ device that is not a power
+# supply; the machine's own battery follows it.
 if [[ $1 == "-e" ]]; then
   echo "/org/freedesktop/UPower/devices/line_power_macsmc_ac"
+  echo "/org/freedesktop/UPower/devices/battery_hidpp_battery_0"
   echo "/org/freedesktop/UPower/devices/battery_${OMARCHY_TEST_NATIVE_PATH//-/_}"
+  exit 0
+fi
+
+if [[ $1 == "-i" && $2 == */battery_hidpp_battery_0 ]]; then
+  cat <<'INFO'
+  native-path:          hidpp_battery_0
+  model:                Wireless Mouse
+  power supply:         no
+  state:                discharging
+  percentage:           5%
+INFO
   exit 0
 fi
 
 if [[ $1 == "-i" ]]; then
   cat <<'INFO'
   native-path:          macsmc-battery
+  power supply:         yes
   state:                discharging
   energy:               28.3 Wh
   energy-full:          56.7 Wh
@@ -43,7 +58,7 @@ chmod +x "$tmp_dir/bin/upower"
 
 shell_output=$(OMARCHY_TEST_NATIVE_PATH=macsmc-battery OMARCHY_POWER_SUPPLY_PATH="$tmp_dir/power" PATH="$tmp_dir/bin:$PATH" "$ROOT/bin/omarchy-battery-status" --shell)
 
-grep -Fx $'percentage\t51%' <<<"$shell_output" >/dev/null || fail "battery status reports percentage"
+grep -Fx $'percentage\t51%' <<<"$shell_output" >/dev/null || fail "battery status reports the machine's battery, not the mouse's"
 grep -Fx $'state\tdischarging' <<<"$shell_output" >/dev/null || fail "battery status reports state"
 grep -Fx $'rate\t10.8W' <<<"$shell_output" >/dev/null || fail "battery status reports live sysfs power rate"
 grep -Fx $'size\t56Wh' <<<"$shell_output" >/dev/null || fail "battery status reports full capacity"

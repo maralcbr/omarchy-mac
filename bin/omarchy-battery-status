@@ -19,11 +19,21 @@ case "${1:-}" in
 esac
 
 # UPower names the device after the sysfs entry, and only some kernels call
-# that BAT*: Apple Silicon reports battery_macsmc_battery. Match on the class.
-battery=$(upower -e 2>/dev/null | awk '/\/battery_/ { print; exit }')
+# that BAT*: Apple Silicon reports battery_macsmc_battery. Match on the class,
+# then take the first one that powers the machine: a wireless mouse or keyboard
+# is a battery_ device too, and UPower marks it "power supply: no".
+battery=""
+battery_info=""
+while read -r candidate; do
+  [[ -n $candidate ]] || continue
+  candidate_info=$(upower -i "$candidate" 2>/dev/null) || continue
+  if grep -qE '^\s*power supply:\s+yes' <<<"$candidate_info"; then
+    battery=$candidate
+    battery_info=$candidate_info
+    break
+  fi
+done < <(upower -e 2>/dev/null | grep '/battery_')
 [[ -z $battery ]] && exit 0
-
-battery_info=$(upower -i "$battery")
 
 percentage=$(awk '/percentage/ { print int($2); exit }' <<<"$battery_info")
 capacity=$(awk '/energy-full:/ { printf "%d", $2; exit }' <<<"$battery_info")
