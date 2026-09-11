@@ -125,12 +125,16 @@ if OMARCHY_PATH="$test_tmp/omarchy" PATH="$test_tmp/bin:$PATH" "$ROOT/bin/omarch
 fi
 pass 'optional install availability rejects unknown transactions'
 
-# `pacman -Si` is the question; every name has to answer, and none at all is
-# vacuously available, the same way omarchy-pkg-present treats no arguments.
+# `pacman -Sp` is the question, resolved the way `-S` will resolve the row;
+# every name has to answer, and none at all is vacuously available, the same
+# way omarchy-pkg-present treats no arguments.
 cat >"$test_tmp/bin/pacman" <<'SH'
 #!/bin/bash
-[[ $1 == -Si ]] || exit 1
+[[ $1 == -Sp ]] || exit 1
 shift
+[[ $1 == --noconfirm ]] && shift
+[[ $1 == -- ]] && shift
+(( $# > 0 )) || exit 1
 for want in "$@"; do
   [[ $want != missing* ]] || exit 1
 done

@@ -6,12 +6,7 @@ install.style.font.victor|ttf-victor-mono-nerd
 install.style.font.bitstream|ttf-bitstream-vera-mono-nerd
 install.style.font.iosevka|ttf-iosevka-nerd
 install.preinstalls|aether cliamp libreoffice-fresh xournalpp pinta obsidian obs-studio kdenlive moonlight-qt lazydocker omacut omacalc omawrite
-install.browser.chrome|google-chrome
-install.browser.edge|microsoft-edge-stable-bin
-install.browser.brave|brave-bin
-install.browser.brave-origin|brave-origin-bin
 install.browser.firefox|firefox
-install.browser.zen|zen-browser-bin
 install.service.1password|1password 1password-cli
 install.service.dropbox|dropbox dropbox-cli libappindicator-gtk3 python-gpgme nautilus-dropbox
 install.service.spotify|spotify

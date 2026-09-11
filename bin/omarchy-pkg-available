@@ -1,10 +1,11 @@
 #!/bin/bash
 
-# omarchy:summary=Returns true if all named packages exist in the configured pacman repositories
+# omarchy:summary=Returns true if all named packages can be installed from the configured pacman repositories
 # omarchy:args=<packages...>
 
-for pkg in "$@"; do
-  pacman -Si "$pkg" &>/dev/null || exit 1
-done
+(( $# > 0 )) || exit 0
 
-exit 0
+# -Sp resolves targets the way -S does, so a name a repository package only
+# provides (libappindicator-gtk3, from libappindicator) counts as available,
+# where -Si answers for exact package names alone.
+pacman -Sp --noconfirm -- "$@" >/dev/null 2>&1

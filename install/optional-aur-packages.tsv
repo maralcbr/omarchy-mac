@@ -1,2 +1,7 @@
 # Menu id|AUR package built by the optional installer
 install.service.nordvpn|nordvpn-bin
+install.browser.chrome|google-chrome
+install.browser.edge|microsoft-edge-stable-bin
+install.browser.brave|brave-bin
+install.browser.brave-origin|brave-origin-bin
+install.browser.zen|zen-browser-bin

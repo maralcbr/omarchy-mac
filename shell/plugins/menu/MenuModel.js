@@ -423,7 +423,9 @@ var GUARD_READERS = [
 //
 // Optional install rows ask the sync database. `pacman -Slq` is one fork for
 // the batch, and the transaction manifest keeps secondary packages in the
-// availability decision.
+// availability decision. A name the set does not hold goes to `pacman -Sp`,
+// which resolves provides and constraints the way `-S` will when the row is
+// chosen: libappindicator-gtk3 is only ever provided, by libappindicator.
 function guardHelpers() {
   return 'declare -A __omarchy_pkgs=()\n'
     + 'mapfile -t __omarchy_pkg_names < <({ pacman -Qq; LC_ALL=C pacman -Qi'
@@ -439,7 +441,7 @@ function guardHelpers() {
     + 'mapfile -t __omarchy_sync_names < <(pacman -Slq 2>/dev/null)\n'
     + 'for __omarchy_pkg in "${__omarchy_sync_names[@]}"; do __omarchy_sync_pkgs[$__omarchy_pkg]=1; done\n'
     + '__omarchy_sync_has() { [[ -n ${__omarchy_sync_pkgs[$1]-} ]] && return 0; '
-    + '[[ $1 == *[\\<\\>=]* ]] && { pacman -Si "$1" &>/dev/null; return; }; return 1; }\n'
+    + 'pacman -Sp --noconfirm -- "$1" &>/dev/null; }\n'
     + 'omarchy-pkg-available() { local p; for p in "$@"; do __omarchy_sync_has "$p" || return 1; done; return 0; }\n'
     + 'while IFS="|" read -r __omarchy_id __omarchy_packages; do '
     + '[[ $__omarchy_id == install.* ]] && __omarchy_install_pkgs[$__omarchy_id]=$__omarchy_packages; '
